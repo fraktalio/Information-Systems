@@ -63,11 +63,17 @@ typealias EventSourcedSystem<Command, Event> = (Command, Sequence<Event>) -> Seq
  * @param State   The type representing the system’s current state.
  * @param Event   The type representing domain events (immutable facts).
  */
-data class System<Command, State, Event>(
-    val decide: (Command, State) -> Sequence<Event>,
-    val evolve: (State, Event) -> State,
+interface ISystem<in Command, State, Event> {
+    val decide: (Command, State) -> Sequence<Event>
+    val evolve: (State, Event) -> State
     val initialState: () -> State
-)
+}
+
+data class System<Command, State, Event>(
+    override val decide: (Command, State) -> Sequence<Event>,
+    override val evolve: (State, Event) -> State,
+    override val initialState: () -> State
+) : ISystem<Command, State, Event>
 
 
 // ---------------------------------------------------------------------------
@@ -79,7 +85,7 @@ data class System<Command, State, Event>(
  *
  * @return A [StateStoredSystem] view of this [System].
  */
-fun <Command, State, Event> System<Command, State, Event>.asStateStoredSystem():
+fun <Command, State, Event> ISystem<Command, State, Event>.asStateStoredSystem():
         StateStoredSystem<Command, State> =
     { command, state ->
         val start = state ?: initialState()
@@ -92,7 +98,7 @@ fun <Command, State, Event> System<Command, State, Event>.asStateStoredSystem():
  *
  * @return An [EventSourcedSystem] view of this [System].
  */
-fun <Command, State, Event> System<Command, State, Event>.asEventSourcedSystem():
+fun <Command, State, Event> ISystem<Command, State, Event>.asEventSourcedSystem():
         EventSourcedSystem<Command, Event> =
     { command, events ->
         decide(command, events.fold(initialState()) { acc, event -> evolve(acc, event) })
