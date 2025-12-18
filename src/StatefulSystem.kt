@@ -20,20 +20,13 @@ interface IStateRepository<C, S> {
 }
 
 // Composing Domain (System) and Infrastructure (IStateRepository) into an Application
-interface IStatefulStateStoredSystem<C, S, E> : ISystem<C, S, E>, IStateRepository<C, S>
 
-// Constructor-like function - Create compose Stateful System
-fun <C, S, E> StatefulStateStoredSystem(
-    system: ISystem<C, S, E>,
-    stateRepository: IStateRepository<C, S>
-): IStatefulStateStoredSystem<C, S, E> =
-    object : IStatefulStateStoredSystem<C, S, E>,
-        IStateRepository<C, S> by stateRepository,
-        ISystem<C, S, E> by system {}
+suspend fun <SYS, C, S, E> SYS.handle(command: C): S where SYS : IStateRepository<C, S>, SYS : ISystem<C, S, E> =
+    asStateStoredSystem().run { this(command, command.fetchState() ?: initialState()).save() }
 
-// The API of the application / HANDLE Command
-suspend fun <C, S, E> IStatefulStateStoredSystem<C, S, E>.handle(command: C): S =
-    asStateStoredSystem().invoke(command, command.fetchState() ?: initialState())
+class StatefulStateStoredSystem<C, S, E>(
+    system: ISystem<C, S, E>, stateRepository: IStateRepository<C, S>
+) : ISystem<C, S, E> by system, IStateRepository<C, S> by stateRepository
 
 
 // 2  ######################## Event Sourced ############################
@@ -57,17 +50,12 @@ interface IEventRepository<C, E> {
 }
 
 // Composing Domain (System) and Infrastructure (IEventRepository) into an Application
-interface IStatefulEventSourcedSystem<C, S, E> : ISystem<C, S, E>, IEventRepository<C, E>
 
-// Constructor-like function - Create compose Stateful System
-fun <C, S, E> StatefulEventSourcedSystem(
-    system: ISystem<C, S, E>,
-    eventRepository: IEventRepository<C, E>
-): IStatefulEventSourcedSystem<C, S, E> =
-    object : IStatefulEventSourcedSystem<C, S, E>,
-        IEventRepository<C, E> by eventRepository,
-        ISystem<C, S, E> by system {}
+suspend fun <SYS, C, S, E> SYS.handle(command: C): Sequence<E> where SYS : IEventRepository<C, E>, SYS : ISystem<C, S, E> =
+    asEventSourcedSystem().run {
+        this(command, command.fetchEvents()).save()
+    }
 
-// The API of the application / HANDLE Command
-suspend fun <C, S, E> IStatefulEventSourcedSystem<C, S, E>.handle(command: C): Sequence<E> =
-    asEventSourcedSystem().invoke(command, command.fetchEvents())
+class StatefulEventSourcedSystem<C, S, E>(
+    system: ISystem<C, S, E>, eventRepository: IEventRepository<C, E>
+) : ISystem<C, S, E> by system, IEventRepository<C, E> by eventRepository

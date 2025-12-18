@@ -92,7 +92,6 @@ fun <Command, State, Event> ISystem<Command, State, Event>.asStateStoredSystem()
         decide(command, start).fold(start) { acc, event -> evolve(acc, event) }
     }
 
-
 /**
  * Converts a general [System] into an [EventSourcedSystem].
  *
