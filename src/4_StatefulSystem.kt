@@ -102,7 +102,7 @@ interface IEventRepository<C, E> {
      * @param system The event-sourced system that produces events from a command and past events
      * @return The newly persisted sequence of events
      */
-    suspend fun process(command: C, system: EventSourcedSystem<C, E>): Sequence<E> {
+    suspend fun process(command: C, system: EventSourcedSystem<C, E, E>): Sequence<E> {
         val pastEvents = fetchEvents(command)
         val newEvents = system(command, pastEvents)
         return save(newEvents)
