@@ -1,5 +1,46 @@
 package com.fraktalio
 
+// ###########################################################################
+// ########### Information Systems encoded in Kotlin's type system ###########
+// #### (encoding information systems as composable algebraic structures) ####
+// ###########################################################################
+
+/**
+ * Represents a **traditional (state-stored) information system**.
+ *
+ * This model stores only the *current state* of the system. When a command
+ * (an intention to modify state) is applied, it directly produces a new state.
+ *
+ * Formally:
+ * ```
+ * Command × State → State
+ * ```
+ *
+ * @param Command The intent to modify the system.
+ * @param State   The current system state.
+ */
+typealias StateStoredSystem<Command, State> = (Command, State?) -> State
+
+
+/**
+ * Represents an **event-sourced information system**.
+ *
+ * In this model, state is not stored directly but reconstructed from
+ * a *sequence of past events*. Commands produce new events, which are
+ * appended immutably to the event log.
+ *
+ * Formally:
+ * ```
+ * Command × Sequence<Event> → Sequence<Event>
+ * ```
+ *
+ * @param Command The intent to modify the system.
+ * @param InEvent   A recorded, immutable state transition.
+ * @param OutEvent  A new recorded, immutable state transition.
+ */
+typealias EventSourcedSystem<Command, InEvent, OutEvent> = (Command, Sequence<InEvent>) -> Sequence<OutEvent>
+
+
 /**
  * A **generalized model** that captures all systems.
  *
@@ -29,17 +70,6 @@ data class GeneralSystem<in Command, in InState, out OutState, in InEvent, out O
 ) : IGeneralSystem<Command, InState, OutState, InEvent, OutEvent>
 
 /**
- * Our `3` param `System` type is just a specialization of a more general `5` param `GeneralSystem` type
- *
- * ```
- * InState == OutState == State
- * InEvent == OutEvent == Event
- * ```
- */
-fun <Command, State, Event> IGeneralSystem<Command, State, State, Event, Event>.asSystem(): System<Command, State, Event> =
-    System(this.decide, this.evolve, this.initialState)
-
-/**
  * Our `4` param `System` type is just a specialization of a more general `5` param `GeneralSystem` type
  *
  * ```
@@ -47,8 +77,20 @@ fun <Command, State, Event> IGeneralSystem<Command, State, State, Event, Event>.
  * InEvent != OutEvent
  * ```
  */
-fun <Command, State, InEvent, OutEvent> IGeneralSystem<Command, State, State, InEvent, OutEvent>.asDynamicSystem(): DynamicSystem<Command, State, InEvent, OutEvent> =
+fun <Command, State, InEvent, OutEvent> GeneralSystem<Command, State, State, InEvent, OutEvent>.asDynamicSystem(): DynamicSystem<Command, State, InEvent, OutEvent> =
     DynamicSystem(this.decide, this.evolve, this.initialState)
+
+
+/**
+ * Our `3` param `System` type is just a specialization of a more general `5` param `GeneralSystem` type
+ *
+ * ```
+ * InState == OutState == State
+ * InEvent == OutEvent == Event
+ * ```
+ */
+fun <Command, State, Event> GeneralSystem<Command, State, State, Event, Event>.asSystem(): System<Command, State, Event> =
+    System(this.decide, this.evolve, this.initialState)
 
 
 // #############################################################
@@ -64,18 +106,9 @@ fun <Command, State, InEvent, OutEvent> IGeneralSystem<Command, State, State, In
 
 /**
  * Transforms the **command type** of this system.
+ * A **contravariant functor** over the command type.
  *
- * Enables adapting a system that handles commands of type [Command]
- * to one that accepts commands of type [Command2].
- *
- * Conceptually, this is a **contravariant functor** over the command type:
- *
- * ```
- * fmapCommand :: (Command2 -> Command) -> System<Command, ...> -> System<Command2, ...>
- * ```
- *
- * @param f A mapping function from the new command type [Command2] to the
- *          original command type [Command].
+ * @param f A mapping function from the new command type [Command2] to the original command type [Command].
  * @return A new `GeneralSystem` that applies [f] to its commands before delegating to the original system.
  */
 inline fun <Command, Command2, InState, OutState, InEvent, OutEvent>
@@ -91,18 +124,7 @@ inline fun <Command, Command2, InState, OutState, InEvent, OutEvent>
 
 /**
  * Transforms the **event types** (input and output) of this system.
- *
- * This allows interoperability between systems that consume or emit
- * different event representations by providing conversion functions.
- *
- * Algebraically, this is a **Profunctor dimap** over the event parameters:
- *
- * ```
- * dimapEvent :: (InEvent2 -> InEvent)
- *            -> (OutEvent -> OutEvent2)
- *            -> System<..., InEvent, OutEvent>
- *            -> System<..., InEvent2, OutEvent2>
- * ```
+ * A **Profunctor dimap** over the event parameters:
  *
  * - Contravariant in [InEvent] (consumed during `evolve`)
  * - Covariant in [OutEvent] (produced by `decide`)
@@ -125,18 +147,7 @@ inline fun <Command, InState, OutState, InEvent, OutEvent, InEvent2, OutEvent2>
 
 /**
  * Transforms the **state representation** of this system.
- *
- * Useful for adapting a system to a different internal model of state
- * while preserving its overall semantics.
- *
- * Algebraically, this is also a **Profunctor dimap**, but over state types:
- *
- * ```
- * dimapState :: (InState2 -> InState)
- *            -> (OutState -> OutState2)
- *            -> System<InState, OutState>
- *            -> System<InState2, OutState2>
- * ```
+ * A **Profunctor dimap**, but over state types:
  *
  * - Contravariant in [InState] (consumed during `decide` and `evolve`)
  * - Covariant in [OutState] (produced by `evolve` and `initialState`)
@@ -159,8 +170,7 @@ inline fun <Command, InState, OutState, InEvent, OutEvent, InState2, OutState2>
 
 /**
  * Applies a system that produces a **function-valued state** to another system.
- *
- * This is the **Applicative `ap`** operation lifted over `GeneralSystem`:
+ * An **Applicative `ap`** operation lifted over `GeneralSystem`.
  *
  * @param ff A system that produces a state-transforming function.
  * @return A new `GeneralSystem` combining both systems applicatively.
@@ -181,13 +191,6 @@ fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
  * producing a new system whose state is a **pair** of their outputs.
  *
  * Algebraically, this corresponds to the **Applicative product** (or `liftA2`)
- * that pairs results from two independent computations:
- *
- * ```
- * product :: System<A> -> System<B> -> System<(A, B)>
- * ```
- *
- * Implemented via `applyState` and a lifted pairing function.
  *
  * @param fb Another system operating over the same input state.
  * @return A new `GeneralSystem` that evolves both systems in parallel and returns a pair of states.
@@ -204,23 +207,6 @@ fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
 /**
  * Combines two systems that may operate on different command, state, and event types
  * into a single system that can handle the **union** of their command and event domains.
- *
- * This function enables **parallel composition** of heterogeneous systems that share
- * similar structural semantics but differ in domain types.
- *
- * ```
- * combine ::
- *   System<C, InState, OutState, InEvent, OutEvent>
- *   -> System<C2, InState2, OutState2, InEvent2, OutEvent2>
- *   -> System<C_SUPER, (InState, InState2), (OutState, OutState2), InEvent_SUPER, OutEvent_SUPER>
- * ```
- *
- * Each component system:
- * - Receives only commands and events of its own subtype.
- * - Evolves its portion of the overall state independently.
- * - Emits its own events (upcast to the supertype).
- *
- * The combined system merges their outputs into a single paired state and shared event stream.
  *
  * @return A new `GeneralSystem` that runs both systems side by side.
  */
@@ -412,23 +398,6 @@ private data class CounterState(val value: Int) {
     override fun toString(): String = value.toString()
 }
 
-//private val counterSystem = GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>(
-//    decide = { cmd, _ ->
-//        when (cmd) {
-//            IncrementCounterCommand.Increment -> sequenceOf(IncrementCounterEvent.Incremented)
-//            DecrementCounterCommand.Decrement -> sequenceOf(DecrementCounterEvent.Decremented)
-//            null -> emptySequence() // ignore unrelated commands
-//        }
-//    },
-//    evolve = { state, event ->
-//        when (event) {
-//            IncrementCounterEvent.Incremented -> state + 1
-//            DecrementCounterEvent.Decremented -> state - 1
-//            null -> state // ignore unrelated events
-//        }
-//    },
-//    initialState = { CounterState(0) }
-//)
 
 private val counterSystem: GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?> =
     incrementCounterSystem

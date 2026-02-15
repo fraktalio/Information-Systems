@@ -1,6 +1,7 @@
-# Heapcon WarmUp MeetUp - 16 October 2025
+# Information Systems in Kotlin
 
 ![fmodel](fmodel.webp)
+
 ## Data & Behaviour = Information (Algebra of the Business)
 
 - Data (`examples/api.kt`): Commands, Events, State
@@ -22,37 +23,16 @@ decide       : Command × State → Sequence<Event>
 evolve       : State × Event   → State
 initialState : ()              → State
 ```
-```kotlin
-data class System<Command, State, Event>(
-    val decide: (Command, State) -> Sequence<Event>,
-    val evolve: (State, Event) -> State,
-    val initialState: () -> State
-)
-
-```
-
-Convert between representations easily:
-```
-val system: System<C, S, E> = ...
-
-val stateStored: StateStoredSystem<C, S> = system.asStateStoredSystem()
-val eventSourced: EventSourcedSystem<C, E> = system.asEventSourcedSystem()
-
-```
 
 ### Algebraic View
 
-| Concept       | Mathematical Structure    | Notes                                                |
-| ------------- | ------------------------- | ---------------------------------------------------- |
-| `mapCommand`  | **Contravariant Functor** | Maps input command types                             |
-| `mapEvent`    | **Profunctor (dimap)**    | Contravariant in input events, covariant in output   |
-| `mapState`    | **Profunctor (dimap)**    | Contravariant in input state, covariant in output    |
-| `combine`     | **Monoidal Product**      | Combines two systems into a product system           |
-| `emptySystem` | **Monoidal Identity**     | Represents the “no-op” system (`System<Nothing?, Unit, Nothing?>`) |
-
-
-
-
+| Concept       | Mathematical Structure    | Notes                                                                     |
+|---------------|---------------------------|---------------------------------------------------------------------------|
+| `mapCommand`  | **Contravariant Functor** | Maps input command types                                                  |
+| `mapEvent`    | **Profunctor (dimap)**    | Contravariant in input events, covariant in output                        |
+| `mapState`    | **Profunctor (dimap)**    | Contravariant in input state, covariant in output                         |
+| `combine`     | **Monoidal Product**      | Combines two systems into a product system                                |
+| `emptySystem` | **Monoidal Identity**     | Represents the “no-op” system (`GeneralSystem<Nothing?, Unit, Nothing?>`) |
 
 ## 📚 Learn More - [fmodel.fraktalio.com](fmodel.fraktalio.com)
 

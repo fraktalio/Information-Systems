@@ -1,52 +1,15 @@
 package com.fraktalio
 
-// ###########################################################################
-// ########### Information Systems encoded in Kotlin's type system ###########
-// #### (encoding information systems as composable algebraic structures) ####
-// ###########################################################################
 
 /**
- * Represents a **traditional (state-stored) information system**.
+ * Represents a system characterized by commands, states, and events, based on the dynamic system model.
  *
- * This model stores only the *current state* of the system. When a command
- * (an intention to modify state) is applied, it directly produces a new state.
+ * This interface specializes in handling commands, maintaining state, and evolving state by generating
+ * events in response to commands. It allows systems to be represented in a state-stored context and in a event-sourced context.
  *
- * Formally:
- * ```
- * Command × State → State
- * ```
- *
- * @param Command The intent to modify the system.
- * @param State   The current system state.
- */
-typealias StateStoredSystem<Command, State> = (Command, State?) -> State
-
-
-
-
-
-/**
- * A **generalized algebraic model** that unifies *state-stored* and *event-sourced*
- * systems under a single abstraction.
- *
- * A system is characterized by three pure functions:
- *
- * 1. **decide** — Determines which events should occur, given a command and current state.
- * 2. **evolve** — Evolves the state by applying a single event.
- * 3. **initialState** — Provides the system’s starting state.
- *
- * Together, they form a reusable and composable description of a domain system.
- *
- * Formally:
- * ```
- * decide : Command × State → Sequence<Event>
- * evolve : State × Event → State
- * initialState : () → State
- * ```
- *
- * @param Command The type representing commands (intent to change state).
- * @param State   The type representing the system’s current state.
- * @param Event   The type representing domain events (immutable facts).
+ * @param Command The type representing commands or intents to modify the system.
+ * @param State The type representing the system's current state.
+ * @param Event The type representing events that modify or define the state of the system.
  */
 interface ISystem<in Command, State, Event> : IDynamicSystem<Command, State, Event, Event> {
 
@@ -117,20 +80,10 @@ inline fun <Command, State, State2, Event> System<Command, State, Event>.mapStat
 ): System<Command, State2, Event> = GeneralSystem(decide, evolve, initialState).mapState(fl, fr).asSystem()
 
 
-// ---------------------------------------------------------------------------
-// Composition
-// ---------------------------------------------------------------------------
-
 /**
  * Combines two [System] instances into a **product system** that processes
  * both sub-systems in parallel.
  *
- * The resulting system:
- *  - Accepts commands that are subtypes of [Command_SUPER]. Command_SUPER = Command1 + Command2
- *  - Evolves states as a [Pair] of the two sub-states. Pair<State1, State2> = State1 * State2
- *  - Emits events that are subtypes of [Event_SUPER]. Event_SUPER = Event1 + Event2
- *
- * This corresponds to the **monoidal product** of two systems.
  *
  * Formally:
  * ```

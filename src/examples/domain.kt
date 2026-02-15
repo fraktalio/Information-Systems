@@ -9,8 +9,20 @@ val counterSystem =
     System<CounterCommand?, CounterState, CounterEvent?>(
         decide = { cmd, state ->
             when (cmd) {
-                is IncrementCounterCommand.Increment -> sequenceOf(IncrementCounterEvent.Incremented(cmd.value, state.incValue + cmd.value))
-                is DecrementCounterCommand.Decrement -> sequenceOf(DecrementCounterEvent.Decremented(cmd.value, state.decValue + cmd.value))
+                is IncrementCounterCommand.Increment -> sequenceOf(
+                    IncrementCounterEvent.Incremented(
+                        cmd.value,
+                        state.incValue + cmd.value
+                    )
+                )
+
+                is DecrementCounterCommand.Decrement -> sequenceOf(
+                    DecrementCounterEvent.Decremented(
+                        cmd.value,
+                        state.decValue + cmd.value
+                    )
+                )
+
                 null -> emptySequence()
             }
         },
@@ -34,7 +46,13 @@ private val incrementCounterSubSystem =
     System<IncrementCounterCommand?, IncrementCounterState, IncrementCounterEvent?>(
         decide = { cmd, state ->
             when (cmd) {
-                is IncrementCounterCommand.Increment -> sequenceOf(IncrementCounterEvent.Incremented(cmd.value, state.value + cmd.value))
+                is IncrementCounterCommand.Increment -> sequenceOf(
+                    IncrementCounterEvent.Incremented(
+                        cmd.value,
+                        state.value + cmd.value
+                    )
+                )
+
                 null -> emptySequence()
             }
         },
@@ -53,7 +71,13 @@ private val decrementCounterSubSystem =
     System<DecrementCounterCommand?, DecrementCounterState, DecrementCounterEvent?>(
         decide = { cmd, state ->
             when (cmd) {
-                is DecrementCounterCommand.Decrement -> sequenceOf(DecrementCounterEvent.Decremented(cmd.value,state.value + cmd.value))
+                is DecrementCounterCommand.Decrement -> sequenceOf(
+                    DecrementCounterEvent.Decremented(
+                        cmd.value,
+                        state.value + cmd.value
+                    )
+                )
+
                 null -> emptySequence()
             }
         },

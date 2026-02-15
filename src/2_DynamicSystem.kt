@@ -1,24 +1,15 @@
 package com.fraktalio
 
 /**
- * Represents an **event-sourced information system**.
+ * Represents a dynamic system that generalizes the behavior of an event-sourced system.
  *
- * In this model, state is not stored directly but reconstructed from
- * a *sequence of past events*. Commands produce new events, which are
- * appended immutably to the event log.
- *
- * Formally:
- * ```
- * Command × Sequence<Event> → Sequence<Event>
- * ```
+ * It allows reconstructing the current state from a sequence of events and producing new events in response to commands.
  *
  * @param Command The intent to modify the system.
- * @param InEvent   A recorded, immutable state transition.
- * @param OutEvent  A new recorded, immutable state transition.
+ * @param State The type representing the system's current state.
+ * @param InEvent The type representing input events used to reconstruct or evolve the system state.
+ * @param OutEvent The type representing new events generated in response to commands.
  */
-typealias EventSourcedSystem<Command, InEvent, OutEvent> = (Command, Sequence<InEvent>) -> Sequence<OutEvent>
-
-
 interface IDynamicSystem<in Command, State, in InEvent, out OutEvent> :
     IGeneralSystem<Command, State, State, InEvent, OutEvent> {
 
@@ -42,6 +33,7 @@ data class DynamicSystem<Command, State, InEvent, OutEvent>(
     override val initialState: () -> State
 ) : IDynamicSystem<Command, State, InEvent, OutEvent>
 
+
 // ###########################################################################
 // ## Functor mappings (covariant / contravariant transformations) ###########
 // ###########################################################################
@@ -53,7 +45,8 @@ data class DynamicSystem<Command, State, InEvent, OutEvent>(
  */
 inline fun <Command, Command2, State, InEvent, OutEvent> DynamicSystem<Command, State, InEvent, OutEvent>.mapCommand(
     crossinline f: (Command2) -> Command
-): DynamicSystem<Command2, State, InEvent, OutEvent> = GeneralSystem(decide, evolve, initialState).mapCommand(f).asDynamicSystem()
+): DynamicSystem<Command2, State, InEvent, OutEvent> =
+    GeneralSystem(decide, evolve, initialState).mapCommand(f).asDynamicSystem()
 
 
 /**
@@ -68,6 +61,7 @@ inline fun <Command, State, InEvent, OutEvent, InEvent2, OutEvent2>
     crossinline fr: (OutEvent) -> OutEvent2
 ): DynamicSystem<Command, State, InEvent2, OutEvent2> =
     GeneralSystem(decide, evolve, initialState).mapEvent(fl, fr).asDynamicSystem()
+
 /**
  * **Difunctor over State** — transforms both the input and output state types of a [DynamicSystem].
  *
@@ -78,5 +72,45 @@ inline fun <Command, State, InEvent, OutEvent, InEvent2, OutEvent2>
 inline fun <Command, State, State2, InEvent, OutEvent> DynamicSystem<Command, State, InEvent, OutEvent>.mapState(
     crossinline fl: (State2) -> State,
     crossinline fr: (State) -> State2
-): DynamicSystem<Command, State2, InEvent, OutEvent> = GeneralSystem(decide, evolve, initialState).mapState(fl, fr).asDynamicSystem()
+): DynamicSystem<Command, State2, InEvent, OutEvent> =
+    GeneralSystem(decide, evolve, initialState).mapState(fl, fr).asDynamicSystem()
 
+
+/**
+ * Combines two [DynamicSystem] instances into a **product system** that processes
+ * both sub-systems in parallel.
+ *
+ *
+ * Formally:
+ * ```
+ * combine : DynamicSystem<Command1, State1, Event1> × DynamicSystem<Command2, State2, Event2> → DynamicSystem<Command1+Command2, (State1×State2), Event1+Event2>
+ * ```
+ *
+ * @receiver The left-hand [DynamicSystem].
+ * @param other Another [DynamicSystem] to combine with this one.
+ * @return A new [DynamicSystem] that runs both systems in parallel.
+ */
+inline infix fun <
+        reified C : C_SUPER,
+        reified C2 : C_SUPER,
+        reified InEvent : InEvent_SUPER,
+        reified InEvent2 : InEvent_SUPER,
+        reified OutEvent : OutEvent_SUPER,
+        reified OutEvent2 : OutEvent_SUPER,
+        C_SUPER,
+        State,
+        InEvent_SUPER,
+        OutEvent_SUPER,
+        State2,
+        >
+        DynamicSystem<C?, State, InEvent?, OutEvent?>.combine(
+    other: DynamicSystem<C2?, State2, InEvent2?, OutEvent2?>
+): DynamicSystem<
+        C_SUPER?,
+        Pair<State, State2>,
+        InEvent_SUPER,
+        OutEvent_SUPER?
+        > =
+    GeneralSystem(decide, evolve, initialState)
+        .combine(GeneralSystem(other.decide, other.evolve, other.initialState))
+        .asDynamicSystem()
