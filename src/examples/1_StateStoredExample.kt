@@ -1,14 +1,14 @@
 package com.fraktalio.examples
 
 import com.fraktalio.StateStoredSystem
-import com.fraktalio.asStateStoredSystem
+import com.fraktalio.inStateStoredSystem
 
 
 fun main() {
     println("=== Counter System - State Stored scenario ===\n")
 
     // Observe the API of the State Stored System! No Events, only Command(s) and State(s)
-    val system: StateStoredSystem<CounterCommand?, CounterState> = counterSystemCombined.asStateStoredSystem()
+    val system: StateStoredSystem<CounterCommand?, CounterState> = counterSystemCombined.inStateStoredSystem()
 
     // ----------------------- Increment & Decrement Counter Demo -----------------------
     var incState = counterSystemCombined.initialState()

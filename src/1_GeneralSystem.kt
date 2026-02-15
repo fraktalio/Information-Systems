@@ -1,7 +1,7 @@
 package com.fraktalio
 
 /**
- * A **generalized model** that captures both state-stored and event-sourced systems.
+ * A **generalized model** that captures all systems.
  *
  * A system is defined by three pure functions:
  * 1. [decide]: Determines which events should occur given a command and current state.
@@ -16,30 +16,45 @@ package com.fraktalio
  * @param InEvent   The current state transition / input event(s).
  * @param OutEvent   The new recorded state transition / output event(s).
  */
-@PublishedApi
-internal data class _System<in Command, in InState, out OutState, in InEvent, out OutEvent>(
-    val decide: (Command, InState) -> Sequence<OutEvent>,
-    val evolve: (InState, InEvent) -> OutState,
-    val initialState: () -> OutState,
-)
+interface IGeneralSystem<in Command, in InState, out OutState, in InEvent, out OutEvent> {
+    val decide: (Command, InState) -> Sequence<OutEvent>
+    val evolve: (InState, InEvent) -> OutState
+    val initialState: () -> OutState
+}
+
+data class GeneralSystem<in Command, in InState, out OutState, in InEvent, out OutEvent>(
+    override val decide: (Command, InState) -> Sequence<OutEvent>,
+    override val evolve: (InState, InEvent) -> OutState,
+    override val initialState: () -> OutState,
+) : IGeneralSystem<Command, InState, OutState, InEvent, OutEvent>
 
 /**
- * Our `3` param `System` type is just a specialization of a more general `5` param `_System` type
+ * Our `3` param `System` type is just a specialization of a more general `5` param `GeneralSystem` type
  *
  * ```
  * InState == OutState == State
  * InEvent == OutEvent == Event
  * ```
  */
-@PublishedApi
-internal fun <Command, State, Event> _System<Command, State, State, Event, Event>.asSystem(): System<Command, State, Event> =
+fun <Command, State, Event> IGeneralSystem<Command, State, State, Event, Event>.asSystem(): System<Command, State, Event> =
     System(this.decide, this.evolve, this.initialState)
+
+/**
+ * Our `4` param `System` type is just a specialization of a more general `5` param `GeneralSystem` type
+ *
+ * ```
+ * InState == OutState == State
+ * InEvent != OutEvent
+ * ```
+ */
+fun <Command, State, InEvent, OutEvent> IGeneralSystem<Command, State, State, InEvent, OutEvent>.asDynamicSystem(): DynamicSystem<Command, State, InEvent, OutEvent> =
+    DynamicSystem(this.decide, this.evolve, this.initialState)
 
 
 // #############################################################
 // ## Functorial and Applicative Transformations              ##
 // #############################################################
-// These combinators provide categorical structure over `_System`:
+// These combinators provide categorical structure over `GeneralSystem`:
 //   - `_mapCommand`: contravariant mapping over commands
 //   - `_mapEvent`:    profunctor mapping over events
 //   - `_mapState`:    profunctor mapping over states
@@ -61,14 +76,13 @@ internal fun <Command, State, Event> _System<Command, State, State, Event, Event
  *
  * @param f A mapping function from the new command type [Command2] to the
  *          original command type [Command].
- * @return A new `_System` that applies [f] to its commands before delegating to the original system.
+ * @return A new `GeneralSystem` that applies [f] to its commands before delegating to the original system.
  */
-@PublishedApi
-internal inline fun <Command, Command2, InState, OutState, InEvent, OutEvent>
-        _System<Command, InState, OutState, InEvent, OutEvent>._mapCommand(
+inline fun <Command, Command2, InState, OutState, InEvent, OutEvent>
+        GeneralSystem<Command, InState, OutState, InEvent, OutEvent>.mapCommand(
     crossinline f: (Command2) -> Command
-): _System<Command2, InState, OutState, InEvent, OutEvent> =
-    _System(
+): GeneralSystem<Command2, InState, OutState, InEvent, OutEvent> =
+    GeneralSystem(
         decide = { command2, state -> decide(f(command2), state) },
         evolve = evolve,
         initialState = initialState
@@ -95,15 +109,14 @@ internal inline fun <Command, Command2, InState, OutState, InEvent, OutEvent>
  *
  * @param fl Maps external input events → internal input events.
  * @param fr Maps internal output events → external output events.
- * @return A new `_System` that transforms events through [fl] and [fr].
+ * @return A new `GeneralSystem` that transforms events through [fl] and [fr].
  */
-@PublishedApi
-internal inline fun <Command, InState, OutState, InEvent, OutEvent, InEvent2, OutEvent2>
-        _System<Command, InState, OutState, InEvent, OutEvent>._mapEvent(
+inline fun <Command, InState, OutState, InEvent, OutEvent, InEvent2, OutEvent2>
+        GeneralSystem<Command, InState, OutState, InEvent, OutEvent>.mapEvent(
     crossinline fl: (InEvent2) -> InEvent,
     crossinline fr: (OutEvent) -> OutEvent2
-): _System<Command, InState, OutState, InEvent2, OutEvent2> =
-    _System(
+): GeneralSystem<Command, InState, OutState, InEvent2, OutEvent2> =
+    GeneralSystem(
         decide = { command, state -> decide(command, state).map { fr(it) } },
         evolve = { state, event2 -> evolve(state, fl(event2)) },
         initialState = initialState
@@ -130,15 +143,14 @@ internal inline fun <Command, InState, OutState, InEvent, OutEvent, InEvent2, Ou
  *
  * @param fl Maps external input state → internal input state.
  * @param fr Maps internal output state → external output state.
- * @return A new `_System` that wraps the internal state transformation logic.
+ * @return A new `GeneralSystem` that wraps the internal state transformation logic.
  */
-@PublishedApi
-internal inline fun <Command, InState, OutState, InEvent, OutEvent, InState2, OutState2>
-        _System<Command, InState, OutState, InEvent, OutEvent>._mapState(
+inline fun <Command, InState, OutState, InEvent, OutEvent, InState2, OutState2>
+        GeneralSystem<Command, InState, OutState, InEvent, OutEvent>.mapState(
     crossinline fl: (InState2) -> InState,
     crossinline fr: (OutState) -> OutState2
-): _System<Command, InState2, OutState2, InEvent, OutEvent> =
-    _System(
+): GeneralSystem<Command, InState2, OutState2, InEvent, OutEvent> =
+    GeneralSystem(
         decide = { command, state2 -> decide(command, fl(state2)) },
         evolve = { state2, event -> fr(evolve(fl(state2), event)) },
         initialState = { fr(initialState()) }
@@ -148,26 +160,16 @@ internal inline fun <Command, InState, OutState, InEvent, OutEvent, InState2, Ou
 /**
  * Applies a system that produces a **function-valued state** to another system.
  *
- * This is the **Applicative `ap`** operation lifted over `_System`:
- *
- * ```
- * ap :: System<(A -> B)> -> System<A> -> System<B>
- * ```
- *
- * - Both systems share the same command, state, and event types.
- * - The first system (`ff`) evolves to produce a function `(OutputState) -> OutputState2`.
- * - The second system evolves to produce a value of type `OutputState`.
- * - The result applies the function to the value, yielding `OutputState2`.
+ * This is the **Applicative `ap`** operation lifted over `GeneralSystem`:
  *
  * @param ff A system that produces a state-transforming function.
- * @return A new `_System` combining both systems applicatively.
+ * @return A new `GeneralSystem` combining both systems applicatively.
  */
-@PublishedApi
-internal fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
-        _System<Command, InState, OutState, InEvent, OutEvent>._applyState(
-    ff: _System<Command, InState, (OutState) -> OutState2, InEvent, OutEvent>
-): _System<Command, InState, OutState2, InEvent, OutEvent> =
-    _System(
+fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
+        GeneralSystem<Command, InState, OutState, InEvent, OutEvent>.applyState(
+    ff: GeneralSystem<Command, InState, (OutState) -> OutState2, InEvent, OutEvent>
+): GeneralSystem<Command, InState, OutState2, InEvent, OutEvent> =
+    GeneralSystem(
         decide = { c, si -> sequenceOf(ff.decide(c, si), decide(c, si)).flatten() },
         evolve = { si, ei -> ff.evolve(si, ei)(evolve(si, ei)) },
         initialState = { ff.initialState()(initialState()) }
@@ -188,15 +190,14 @@ internal fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
  * Implemented via `applyState` and a lifted pairing function.
  *
  * @param fb Another system operating over the same input state.
- * @return A new `_System` that evolves both systems in parallel and returns a pair of states.
+ * @return A new `GeneralSystem` that evolves both systems in parallel and returns a pair of states.
  */
-@PublishedApi
-internal fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
-        _System<Command, InState, OutState, InEvent, OutEvent>._productOnState(
-    other: _System<Command, InState, OutState2, InEvent, OutEvent>
-): _System<Command, InState, Pair<OutState, OutState2>, InEvent, OutEvent> =
-    _applyState(
-        other._mapState({ it }) { b: OutState2 -> { a: OutState -> Pair(a, b) } }
+fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
+        GeneralSystem<Command, InState, OutState, InEvent, OutEvent>.productOnState(
+    other: GeneralSystem<Command, InState, OutState2, InEvent, OutEvent>
+): GeneralSystem<Command, InState, Pair<OutState, OutState2>, InEvent, OutEvent> =
+    applyState(
+        other.mapState({ it }) { b: OutState2 -> { a: OutState -> Pair(a, b) } }
     )
 
 
@@ -221,10 +222,9 @@ internal fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
  *
  * The combined system merges their outputs into a single paired state and shared event stream.
  *
- * @return A new `_System` that runs both systems side by side.
+ * @return A new `GeneralSystem` that runs both systems side by side.
  */
-@PublishedApi
-internal inline infix fun <
+inline infix fun <
         reified C : C_SUPER,
         reified C2 : C_SUPER,
         reified InEvent : InEvent_SUPER,
@@ -239,9 +239,9 @@ internal inline infix fun <
         InState2,
         OutState2
         >
-        _System<C?, InState, OutState, InEvent?, OutEvent?>._combine(
-    other: _System<C2?, InState2, OutState2, InEvent2?, OutEvent2?>
-): _System<
+        GeneralSystem<C?, InState, OutState, InEvent?, OutEvent?>.combine(
+    other: GeneralSystem<C2?, InState2, OutState2, InEvent2?, OutEvent2?>
+): GeneralSystem<
         C_SUPER?,
         Pair<InState, InState2>,
         Pair<OutState, OutState2>,
@@ -250,28 +250,28 @@ internal inline infix fun <
         > {
 
     val systemA = this
-        ._mapCommand<C?, C_SUPER?, InState, OutState, InEvent?, OutEvent?> { it as? C }
-        ._mapState<C_SUPER?, InState, OutState, InEvent?, OutEvent?, Pair<InState, InState2>, OutState>(
+        .mapCommand<C?, C_SUPER?, InState, OutState, InEvent?, OutEvent?> { it as? C }
+        .mapState<C_SUPER?, InState, OutState, InEvent?, OutEvent?, Pair<InState, InState2>, OutState>(
             { it.first },
             { it }
         )
-        ._mapEvent<C_SUPER?, Pair<InState, InState2>, OutState, InEvent?, OutEvent?, InEvent_SUPER, OutEvent_SUPER?>(
+        .mapEvent<C_SUPER?, Pair<InState, InState2>, OutState, InEvent?, OutEvent?, InEvent_SUPER, OutEvent_SUPER?>(
             { it as? InEvent },
             { it }
         )
 
     val systemB = other
-        ._mapCommand<C2?, C_SUPER?, InState2, OutState2, InEvent2?, OutEvent2?> { it as? C2 }
-        ._mapState<C_SUPER?, InState2, OutState2, InEvent2?, OutEvent2?, Pair<InState, InState2>, OutState2>(
+        .mapCommand<C2?, C_SUPER?, InState2, OutState2, InEvent2?, OutEvent2?> { it as? C2 }
+        .mapState<C_SUPER?, InState2, OutState2, InEvent2?, OutEvent2?, Pair<InState, InState2>, OutState2>(
             { it.second },
             { it }
         )
-        ._mapEvent<C_SUPER?, Pair<InState, InState2>, OutState2, InEvent2?, OutEvent2?, InEvent_SUPER, OutEvent_SUPER?>(
+        .mapEvent<C_SUPER?, Pair<InState, InState2>, OutState2, InEvent2?, OutEvent2?, InEvent_SUPER, OutEvent_SUPER?>(
             { it as? InEvent2 },
             { it }
         )
 
-    return systemA._productOnState(systemB)
+    return systemA.productOnState(systemB)
 }
 
 // ####################################################################################
@@ -298,7 +298,7 @@ private value class IncrementCounterState(val value: Int) {
 }
 
 private val incrementCounterSystem =
-    _System<IncrementCounterCommand?, IncrementCounterState, IncrementCounterState, IncrementCounterEvent?, IncrementCounterEvent?>(
+    GeneralSystem<IncrementCounterCommand?, IncrementCounterState, IncrementCounterState, IncrementCounterEvent?, IncrementCounterEvent?>(
         decide = { cmd, _ ->
             when (cmd) {
                 IncrementCounterCommand.Increment -> sequenceOf(IncrementCounterEvent.Incremented)
@@ -336,7 +336,7 @@ private value class DecrementCounterState(val value: Int) {
 }
 
 private val decrementCounterSystem =
-    _System<DecrementCounterCommand?, DecrementCounterState, DecrementCounterState, DecrementCounterEvent?, DecrementCounterEvent?>(
+    GeneralSystem<DecrementCounterCommand?, DecrementCounterState, DecrementCounterState, DecrementCounterEvent?, DecrementCounterEvent?>(
         decide = { cmd, _ ->
             when (cmd) {
                 DecrementCounterCommand.Decrement -> sequenceOf(DecrementCounterEvent.Decremented)
@@ -358,8 +358,8 @@ private val decrementCounterSystem =
 /**
  * A trivial / no-op system that does nothing.
  *
- * This `_System` serves as the **identity element** for system combination,
- * making `_System` a **Monoid** under the `_combine` operation.
+ * This `GeneralSystem` serves as the **identity element** for system combination,
+ * making `GeneralSystem` a **Monoid** under the `_combine` operation.
  *
  * Type parameters:
  * - Command / Event: `Nothing?` — this system never consumes or emits anything.
@@ -387,9 +387,9 @@ private val decrementCounterSystem =
  * Use cases:
  * - Acts as a neutral element for `_combine`.
  * - Useful in testing or as a placeholder system.
- * - Proves that `_System` with `_combine` and `emptySystem` forms a Monoid.
+ * - Proves that `GeneralSystem` with `_combine` and `emptySystem` forms a Monoid.
  */
-private val emptySystem = _System<Nothing?, Unit, Unit, Nothing?, Nothing?>(
+private val emptySystem = GeneralSystem<Nothing?, Unit, Unit, Nothing?, Nothing?>(
     decide = { _, _ -> emptySequence() },
     evolve = { _, _ -> Unit },
     initialState = { Unit }
@@ -412,7 +412,7 @@ private data class CounterState(val value: Int) {
     override fun toString(): String = value.toString()
 }
 
-//private val counterSystem = _System<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>(
+//private val counterSystem = GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>(
 //    decide = { cmd, _ ->
 //        when (cmd) {
 //            IncrementCounterCommand.Increment -> sequenceOf(IncrementCounterEvent.Incremented)
@@ -430,12 +430,12 @@ private data class CounterState(val value: Int) {
 //    initialState = { CounterState(0) }
 //)
 
-private val counterSystem: _System<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?> =
+private val counterSystem: GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?> =
     incrementCounterSystem
-        ._combine(decrementCounterSystem) // _System<CounterCommand?, Pair<IncrementCounterState, DecrementCounterState>, Pair<IncrementCounterState, DecrementCounterState>, CounterEvent?, CounterEvent?>
-        ._mapState(
+        .combine(decrementCounterSystem) // GeneralSystem<CounterCommand?, Pair<IncrementCounterState, DecrementCounterState>, Pair<IncrementCounterState, DecrementCounterState>, CounterEvent?, CounterEvent?>
+        .mapState(
             { counterState -> Pair(IncrementCounterState(counterState.value), DecrementCounterState(0)) },
-            { pair -> CounterState(pair.first.value + pair.second.value) }) // _System<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>
+            { pair -> CounterState(pair.first.value + pair.second.value) }) // GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>
 
 
 /**
@@ -451,12 +451,12 @@ private val counterSystem: _System<CounterCommand?, CounterState, CounterState, 
  *
  *
  */
-private val counterSystem1: _System<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?> =
+private val counterSystem1: GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?> =
     counterSystem
-        ._combine(emptySystem) // _System<CounterCommand?, Pair<CounterState, Unit>, Pair<CounterState, Unit>, CounterEvent?, CounterEvent?>
-        ._mapState(
+        .combine(emptySystem) // GeneralSystem<CounterCommand?, Pair<CounterState, Unit>, Pair<CounterState, Unit>, CounterEvent?, CounterEvent?>
+        .mapState(
             { counterState -> Pair(CounterState(counterState.value), Unit) },
-            { pair -> pair.first }) // _System<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>
+            { pair -> pair.first }) // GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>
 
 
 fun main() {
