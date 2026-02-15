@@ -1,7 +1,6 @@
 package com.fraktalio.examples
 
 import com.fraktalio.StateStoredSystem
-import com.fraktalio.inStateStoredSystem
 
 
 fun main() {

@@ -1,13 +1,12 @@
 package com.fraktalio.examples
 
 import com.fraktalio.EventSourcedSystem
-import com.fraktalio.inEventSourcedSystem
 
 fun main() {
     println("=== Counter System - Event Sourced scenario ===\n")
 
     // Observe the API of the Event Sourced System! No State, only Command(s) and Event(s)
-    val system: EventSourcedSystem<CounterCommand?, CounterEvent?> =
+    val system: EventSourcedSystem<CounterCommand?, CounterEvent?, CounterEvent?> =
         counterSystemCombined.inEventSourcedSystem()
 
     // Start with an empty event log
