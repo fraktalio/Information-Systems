@@ -106,6 +106,12 @@ This provides:
 | `combine`     | **Monoidal Product**      | Combines two systems into a product system                                |
 | `emptySystem` | **Monoidal Identity**     | Represents the "no-op" system (`GeneralSystem<Nothing?, Unit, Nothing?>`) |
 
+## Why Systems Thinking Matters in the AI Era
+
+As software engineering continues to raise the level of abstraction through AI, systems thinking becomes even more essential. While AI tools grow increasingly powerful at generating code, the real value lies in understanding how components interact, how decisions ripple through ecosystems, and how to design resilient, adaptable systems.
+
+This library embodies that philosophy: composable algebraic structures that let you reason about system behavior at a higher level. When AI assists in implementation, your focus shifts to architecture, composition, and the invariants that matter—exactly where human insight creates the most value.
+
 ## Data & Behaviour = Information (Algebra of the Business)
 
 - Data (`examples/api.kt`): Commands, Events, State
