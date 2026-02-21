@@ -74,19 +74,19 @@ you read are the same type as the events you produce. For more flexible event tr
 
 `src/4_StatefulSystem.kt` — Practical implementation
 
-Adds repository interfaces for persistence:
+Adds repository interfaces for persistence with metadata support:
 
 ```kotlin
-interface IStateRepository<Command, State> {
-    suspend fun fetchState(command: Command): State?
-    suspend fun save(state: State): State
-    suspend fun process(command: Command, system: StateStoredSystem<Command, State>): State
+interface IStateRepository<Command, CommandMetadata, State, StateMetadata> {
+    suspend fun fetchState(command: Pair<Command, CommandMetadata>): Pair<State, StateMetadata>?
+    suspend fun save(state: Pair<State, CommandMetadata>): Pair<State, StateMetadata>
+    suspend fun process(command: Pair<Command, CommandMetadata>, system: StateStoredSystem<Command, State>): Pair<State, StateMetadata>
 }
 
-interface IEventRepository<Command, InEvent, OutEvent> {
-    suspend fun fetchEvents(command: Command): Sequence<InEvent>
-    suspend fun save(events: Sequence<OutEvent>): Sequence<OutEvent>
-    suspend fun process(command: Command, system: EventSourcedSystem<Command, InEvent, OutEvent>): Sequence<OutEvent>
+interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata> {
+    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>): Sequence<Pair<InEvent, InEventMetadata>>
+    suspend fun save(events: Sequence<OutEvent>, commandMetadata: CommandMetadata): Sequence<Pair<OutEvent, OutEventMetadata>>
+    suspend fun process(command: Pair<Command, CommandMetadata>, system: EventSourcedSystem<Command, InEvent, OutEvent>): Sequence<Pair<OutEvent, OutEventMetadata>>
 }
 ```
 
@@ -95,6 +95,32 @@ This provides:
 - Separation of domain logic from persistence
 - Transactional semantics (fetch → compute → save)
 - Convenient `handle` extension functions
+- Metadata support at infrastructure/application level
+
+#### Metadata: Infrastructure Concern, Not Domain Concern
+
+A key design principle: metadata exists only at the infrastructure/application boundaries and never leaks into the domain layer.
+
+Domain systems (`IGeneralSystem`, `IDynamicSystem`, `ISystem`) remain pure and focused on business logic:
+
+```kotlin
+decide: (Command, State) -> Sequence<Event>  // No metadata here
+```
+
+Metadata is introduced at the repository level for infrastructure concerns:
+
+- Versioning and optimistic locking
+- Correlation IDs for distributed tracing
+- Event sequence numbers and timestamps
+
+The `process` method orchestrates the flow:
+
+1. Fetch data with metadata from storage
+2. Extract pure domain data and pass to domain system (metadata-free)
+3. Domain system produces new data (pure business logic)
+4. Attach metadata and persist
+
+This separation keeps domain logic testable, composable, and free from infrastructure concerns.
 
 ## Algebraic View
 
