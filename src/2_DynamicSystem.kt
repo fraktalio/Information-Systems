@@ -1,9 +1,7 @@
 package com.fraktalio
 
 /**
- * Represents a dynamic system that generalizes the behavior of an event-sourced system.
- *
- * It allows reconstructing the current state from a sequence of events and producing new events in response to commands.
+ * Represents a dynamic system that generalizes the behavior of a dynamic system.
  *
  * @param Command The intent to modify the system.
  * @param State The type representing the system's current state.
@@ -25,6 +23,14 @@ interface IDynamicSystem<in Command, State, in InEvent, out OutEvent> :
         { command, events ->
             decide(command, events.fold(initialState()) { acc, event -> evolve(acc, event) })
         }
+
+    // We CAN NOT convert dynamic system into StateStoredSystem !!!
+
+//    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+//        { command, state ->
+//            val current = state ?: initialState()
+//            decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
+//        }
 }
 
 data class DynamicSystem<Command, State, InEvent, OutEvent>(
