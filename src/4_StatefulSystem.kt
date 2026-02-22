@@ -71,9 +71,16 @@ interface IStateRepository<Command, CommandMetadata, State, StateMetadata> {
 /**
  * Handles a command by composing domain logic ([ISystem]) and repository operations ([IStateRepository]).
  *
- * This extension function provides a convenient way to process commands with metadata while
- * keeping the domain layer pure. The metadata flows through the infrastructure layer but
- * never enters the domain system.
+ * This extension function demonstrates **composition through multiple type constraints**:
+ * - `SYSTEM : IStateRepository` provides persistence capabilities (fetch, save)
+ * - `SYSTEM : ISystem` provides domain logic (decide, evolve, initialState)
+ *
+ * The composition happens at the type level: any type implementing both interfaces
+ * automatically gains the `handle` capability. The function extracts the pure domain
+ * system via `inStateStoredSystem()` and passes it to the repository's `process` method.
+ *
+ * Metadata flows through the infrastructure layer but never enters the domain system,
+ * maintaining separation of concerns.
  *
  * @param command The command paired with metadata (e.g., user context, correlation ID)
  * @return The resulting state paired with metadata (e.g., version, timestamp)
@@ -161,9 +168,16 @@ interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, O
 /**
  * Handles a command by composing domain logic ([ISystem]) and event repository operations ([IEventRepository]).
  *
- * This extension function provides a convenient way to process commands with metadata while
- * keeping the domain layer pure. The metadata flows through the infrastructure layer but
- * never enters the domain system.
+ * This extension function demonstrates **composition through multiple type constraints**:
+ * - `SYSTEM : IEventRepository` provides event persistence capabilities (fetchEvents, save)
+ * - `SYSTEM : ISystem` provides domain logic (decide, evolve, initialState)
+ *
+ * The composition happens at the type level: any type implementing both interfaces
+ * automatically gains the `handle` capability. The function extracts the pure domain
+ * system via `inEventSourcedSystem()` and passes it to the repository's `process` method.
+ *
+ * Metadata flows through the infrastructure layer but never enters the domain system,
+ * maintaining separation of concerns.
  *
  * @param command The command paired with metadata (e.g., user context, correlation ID)
  * @return The resulting sequence of events paired with metadata (e.g., sequence numbers, timestamps)
@@ -176,8 +190,17 @@ suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata> SYST
 /**
  * Handles a command by composing domain logic ([IDynamicSystem]) and event repository operations ([IEventRepository]).
  *
- * This extension function provides a convenient way to process commands with metadata while
- * keeping the domain layer pure. Supports dynamic systems where input and output event types differ.
+ * This extension function demonstrates **composition through multiple type constraints**:
+ * - `SYSTEM : IEventRepository` provides event persistence capabilities (fetchEvents, save)
+ * - `SYSTEM : IDynamicSystem` provides domain logic (decide, evolve, initialState)
+ *
+ * The composition happens at the type level: any type implementing both interfaces
+ * automatically gains the `handle` capability. Supports dynamic systems where input and
+ * output event types differ (InEvent ≠ OutEvent).
+ *
+ * The function extracts the pure domain system via `inEventSourcedSystem()` and passes it
+ * to the repository's `process` method. Metadata flows through the infrastructure layer
+ * but never enters the domain system, maintaining separation of concerns.
  *
  * @param command The command paired with metadata (e.g., user context, correlation ID)
  * @return The resulting sequence of events paired with metadata (e.g., sequence numbers, timestamps)

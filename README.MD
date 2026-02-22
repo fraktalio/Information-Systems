@@ -10,6 +10,47 @@ event-sourced (🌀 store past events) architectures under a single model.
 The library is structured as a progression from the most general abstraction to practical implementations. Each file
 builds upon the previous one through specialization:
 
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ IGeneralSystem<Command, InState, OutState, InEvent, OutEvent>  │
+│ (5 type parameters - most general)                              │
+│ • decide: (Command, InState) -> Sequence<OutEvent>              │
+│ • evolve: (InState, InEvent) -> OutState                        │
+│ • initialState: () -> OutState                                  │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             │ InState == OutState == State
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ IDynamicSystem<Command, State, InEvent, OutEvent>               │
+│ extends IGeneralSystem<Command, State, State, InEvent, OutEvent>│
+│ (4 type parameters)                                              │
+│ • State types unified                                            │
+│ • Can convert to EventSourcedSystem                              │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             │ InEvent == OutEvent == Event
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ ISystem<Command, State, Event>                                  │
+│ extends IDynamicSystem<Command, State, Event, Event>            │
+│ (3 type parameters - most common)                               │
+│ • Event types unified                                            │
+│ • Can convert to StateStoredSystem                               │
+│ • Can convert to EventSourcedSystem (limited)                    │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             │ Add persistence + metadata
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ IStateRepository / IEventRepository                             │
+│ (Infrastructure layer - metadata support)                        │
+│ • Metadata never leaks into domain                               │
+│ • Transactional semantics (fetch → compute → save)               │
+│ • handle() extension functions                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ### 1. GeneralSystem (5 type parameters)
 
 `src/1_GeneralSystem.kt` — The foundation
@@ -110,8 +151,10 @@ decide: (Command, State) -> Sequence<Event>  // No metadata here
 Metadata is introduced at the repository level for infrastructure concerns:
 
 - Versioning and optimistic locking
+- Audit trails (who, when, from where)
 - Correlation IDs for distributed tracing
 - Event sequence numbers and timestamps
+- Tenant/user context for multi-tenancy
 
 The `process` method orchestrates the flow:
 
@@ -121,6 +164,45 @@ The `process` method orchestrates the flow:
 4. Attach metadata and persist
 
 This separation keeps domain logic testable, composable, and free from infrastructure concerns.
+
+#### Composition Through Multiple Type Constraints
+
+The `handle` extension functions demonstrate elegant composition at the type level:
+
+```kotlin
+suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata> 
+    SYSTEM.handle(command: Pair<Command, CommandMetadata>): Sequence<Pair<Event, EventMetadata>>
+        where SYSTEM : IEventRepository<Command, CommandMetadata, Event, EventMetadata, Event, EventMetadata>,
+              SYSTEM : ISystem<Command, State, Event> =
+    process(command, inEventSourcedSystem())
+```
+
+This composition pattern:
+- **Type-level composition**: Any type implementing both `IEventRepository` and `ISystem` automatically gains `handle` capability
+- **Separation of concerns**: Repository provides persistence, System provides domain logic
+- **No inheritance required**: Composition through interfaces, not class hierarchies
+- **Metadata isolation**: Domain system extracted via `inEventSourcedSystem()` remains metadata-free
+
+Example implementation:
+
+```kotlin
+class OrderSystem : 
+    ISystem<OrderCommand, OrderState, OrderEvent>,
+    IEventRepository<OrderCommand, UserContext, OrderEvent, EventMetadata, OrderEvent, EventMetadata> {
+    
+    // Domain logic (pure)
+    override val decide = { command: OrderCommand, state: OrderState -> /* ... */ }
+    override val evolve = { state: OrderState, event: OrderEvent -> /* ... */ }
+    override val initialState = { OrderState.empty() }
+    
+    // Infrastructure (with metadata)
+    override suspend fun fetchEvents(command: Pair<OrderCommand, UserContext>) = /* ... */
+    override suspend fun save(events: Sequence<OrderEvent>, metadata: UserContext) = /* ... */
+}
+
+// Composition happens automatically - handle() is now available
+val result = orderSystem.handle(PlaceOrder(...) to UserContext(userId = "123"))
+```
 
 ## Algebraic View
 
