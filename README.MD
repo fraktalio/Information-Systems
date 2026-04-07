@@ -49,6 +49,15 @@ builds upon the previous one through specialization:
 │ • Transactional semantics (fetch → compute → save)               │
 │ • handle() extension functions                                   │
 └─────────────────────────────────────────────────────────────────┘
+                             │
+                             │ Given-When-Then DSL
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ SystemSpecification (Testing DSL)                               │
+│ • givenEvents / thenEvents (event-sourced, IDynamicSystem)      │
+│ • givenState / thenState (state-stored, ISystem)                │
+│ • whenCommand (identity for readability)                         │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### 1. GeneralSystem (5 type parameters)
@@ -203,6 +212,36 @@ class OrderSystem :
 // Composition happens automatically - handle() is now available
 val result = orderSystem.handle(PlaceOrder(...) to UserContext(userId = "123"))
 ```
+
+### 5. SystemSpecification (Testing DSL)
+
+`src/SystemSpecification.kt` — Given-When-Then specification DSL
+
+A lightweight DSL for specifying and verifying system behavior in both event-sourced and state-stored styles:
+
+**Event-sourced** — given past events, when a command is issued, then expect new events:
+
+```kotlin
+counterSystem.givenEvents(emptyList()) {
+    whenCommand(IncrementCounterCommand.Increment(5))
+} thenEvents listOf(IncrementCounterEvent.Incremented(5, 5))
+```
+
+**State-stored** — given a current state, when a command is issued, then expect a new state:
+
+```kotlin
+counterSystem.givenState(CounterState(0, 0)) {
+    whenCommand(IncrementCounterCommand.Increment(5))
+} thenState CounterState(incValue = 5, decValue = 0)
+```
+
+| Function       | Role      | Works with                                  |
+|----------------|-----------|---------------------------------------------|
+| `givenEvents`  | **Given** | `IDynamicSystem` (InEvent ≠ OutEvent)       |
+| `givenState`   | **Given** | `ISystem` (state-stored)                    |
+| `whenCommand`  | **When**  | Any command type                            |
+| `thenEvents`   | **Then**  | Asserts produced events match expected      |
+| `thenState`    | **Then**  | Asserts resulting state matches expected    |
 
 ## Algebraic View
 
