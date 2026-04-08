@@ -40,16 +40,6 @@ builds upon the previous one through specialization:
 │ • Can convert to EventSourcedSystem (limited)                    │
 └────────────────────────────┬────────────────────────────────────┘
                              │
-                             │ Add persistence + metadata
-                             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ IStateRepository / IEventRepository                             │
-│ (Infrastructure layer - metadata support)                        │
-│ • Metadata never leaks into domain                               │
-│ • Transactional semantics (fetch → compute → save)               │
-│ • handle() extension functions                                   │
-└─────────────────────────────────────────────────────────────────┘
-                             │
                              │ Given-When-Then DSL
                              ▼
 ┌─────────────────────────────────────────────────────────────────┐
@@ -57,6 +47,16 @@ builds upon the previous one through specialization:
 │ • givenEvents / thenEvents (event-sourced, IDynamicSystem)      │
 │ • givenState / thenState (state-stored, ISystem)                │
 │ • whenCommand (identity for readability)                         │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             │ Add persistence + metadata + transactions
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ IStateRepository / IEventRepository                             │
+│ (Infrastructure layer - metadata + transaction support)          │
+│ • Metadata never leaks into domain                               │
+│ • Explicit transaction handle (Txn) for atomicity               │
+│ • inTransaction / handle() extension functions                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -120,36 +120,82 @@ Note: The constraint `InEvent == OutEvent` means this system can only handle eve
 you read are the same type as the events you produce. For more flexible event transformations (InEvent ≠ OutEvent), use
 `DynamicSystem` instead.
 
-### 4. StatefulSystem (Persistence layer)
+### 4. SystemSpecification (Testing DSL)
 
-`src/4_StatefulSystem.kt` — Practical implementation
+`src/4_SystemSpecification.kt` — Given-When-Then specification DSL
 
-Adds repository interfaces for persistence with metadata support:
+A lightweight DSL for specifying and verifying system behavior in both event-sourced and state-stored styles:
+
+**Event-sourced** — given past events, when a command is issued, then expect new events:
 
 ```kotlin
-interface IStateRepository<Command, CommandMetadata, State, StateMetadata> {
-    suspend fun fetchState(command: Pair<Command, CommandMetadata>): Pair<State, StateMetadata>?
-    suspend fun save(state: Pair<State, CommandMetadata>): Pair<State, StateMetadata>
-    suspend fun process(command: Pair<Command, CommandMetadata>, system: StateStoredSystem<Command, State>): Pair<State, StateMetadata>
+counterSystem.givenEvents(emptyList()) {
+    whenCommand(IncrementCounterCommand.Increment(5))
+} thenEvents listOf(IncrementCounterEvent.Incremented(5, 5))
+```
+
+**State-stored** — given a current state, when a command is issued, then expect a new state:
+
+```kotlin
+counterSystem.givenState(CounterState(0, 0)) {
+    whenCommand(IncrementCounterCommand.Increment(5))
+} thenState CounterState(incValue = 5, decValue = 0)
+```
+
+| Function      | Role      | Works with                               |
+|---------------|-----------|------------------------------------------|
+| `givenEvents` | **Given** | `IDynamicSystem` (InEvent ≠ OutEvent)    |
+| `givenState`  | **Given** | `ISystem` (state-stored)                 |
+| `whenCommand` | **When**  | Any command type                         |
+| `thenEvents`  | **Then**  | Asserts produced events match expected   |
+| `thenState`   | **Then**  | Asserts resulting state matches expected |
+
+### 5. StatefulSystem (Persistence layer)
+
+`src/5_StatefulSystem.kt` — Practical implementation
+
+Adds repository interfaces for persistence with metadata and explicit transaction support:
+
+```kotlin
+interface IStateRepository<Command, CommandMetadata, State, StateMetadata, Txn> {
+    suspend fun fetchState(command: Pair<Command, CommandMetadata>, txn: Txn): Pair<State, StateMetadata>?
+    suspend fun save(state: Pair<State, CommandMetadata>, txn: Txn): Pair<State, StateMetadata>
+    suspend fun <T> inTransaction(block: suspend (Txn) -> T): T
+    suspend fun process(
+        command: Pair<Command, CommandMetadata>,
+        system: StateStoredSystem<Command, State>
+    ): Pair<State, StateMetadata>
 }
 
-interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata> {
-    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>): Sequence<Pair<InEvent, InEventMetadata>>
-    suspend fun save(events: Sequence<OutEvent>, commandMetadata: CommandMetadata): Sequence<Pair<OutEvent, OutEventMetadata>>
-    suspend fun process(command: Pair<Command, CommandMetadata>, system: EventSourcedSystem<Command, InEvent, OutEvent>): Sequence<Pair<OutEvent, OutEventMetadata>>
+interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Txn> {
+    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>, txn: Txn): Sequence<Pair<InEvent, InEventMetadata>>
+    suspend fun save(
+        events: Sequence<OutEvent>,
+        commandMetadata: CommandMetadata,
+        txn: Txn
+    ): Sequence<Pair<OutEvent, OutEventMetadata>>
+    suspend fun <T> inTransaction(block: suspend (Txn) -> T): T
+    suspend fun process(
+        command: Pair<Command, CommandMetadata>,
+        system: EventSourcedSystem<Command, InEvent, OutEvent>
+    ): Sequence<Pair<OutEvent, OutEventMetadata>>
 }
 ```
 
 This provides:
 
 - Separation of domain logic from persistence
-- Transactional semantics (fetch → compute → save)
+- Explicit transaction handle (`Txn`) for atomicity — the fetch → compute → save sequence runs within a single
+  transaction
+- Flexible locking strategy: pessimistic (e.g., `SELECT ... FOR UPDATE`) or optimistic (e.g.,
+  `UPDATE ... WHERE version = ?`)
 - Convenient `handle` extension functions
 - Metadata support at infrastructure/application level
 
 #### Metadata: Infrastructure Concern, Not Domain Concern
 
-A key design principle: metadata exists only at the infrastructure/application boundaries and never leaks into the domain layer.
+A key design principle: metadata exists only at the infrastructure/application boundaries and never leaks into the
+domain layer.
 
 Domain systems (`IGeneralSystem`, `IDynamicSystem`, `ISystem`) remain pure and focused on business logic:
 
@@ -179,15 +225,17 @@ This separation keeps domain logic testable, composable, and free from infrastru
 The `handle` extension functions demonstrate elegant composition at the type level:
 
 ```kotlin
-suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata> 
-    SYSTEM.handle(command: Pair<Command, CommandMetadata>): Sequence<Pair<Event, EventMetadata>>
-        where SYSTEM : IEventRepository<Command, CommandMetadata, Event, EventMetadata, Event, EventMetadata>,
+suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata, Txn>
+        SYSTEM.handle(command: Pair<Command, CommandMetadata>): Sequence<Pair<Event, EventMetadata>>
+        where SYSTEM : IEventRepository<Command, CommandMetadata, Event, EventMetadata, Event, EventMetadata, Txn>,
               SYSTEM : ISystem<Command, State, Event> =
     process(command, inEventSourcedSystem())
 ```
 
 This composition pattern:
-- **Type-level composition**: Any type implementing both `IEventRepository` and `ISystem` automatically gains `handle` capability
+
+- **Type-level composition**: Any type implementing both `IEventRepository` and `ISystem` automatically gains `handle`
+  capability
 - **Separation of concerns**: Repository provides persistence, System provides domain logic
 - **No inheritance required**: Composition through interfaces, not class hierarchies
 - **Metadata isolation**: Domain system extracted via `inEventSourcedSystem()` remains metadata-free
@@ -195,53 +243,24 @@ This composition pattern:
 Example implementation:
 
 ```kotlin
-class OrderSystem : 
+class OrderSystem :
     ISystem<OrderCommand, OrderState, OrderEvent>,
-    IEventRepository<OrderCommand, UserContext, OrderEvent, EventMetadata, OrderEvent, EventMetadata> {
-    
+    IEventRepository<OrderCommand, UserContext, OrderEvent, EventMetadata, OrderEvent, EventMetadata, Connection> {
+
     // Domain logic (pure)
     override val decide = { command: OrderCommand, state: OrderState -> /* ... */ }
     override val evolve = { state: OrderState, event: OrderEvent -> /* ... */ }
     override val initialState = { OrderState.empty() }
-    
-    // Infrastructure (with metadata)
-    override suspend fun fetchEvents(command: Pair<OrderCommand, UserContext>) = /* ... */
-    override suspend fun save(events: Sequence<OrderEvent>, metadata: UserContext) = /* ... */
+
+    // Infrastructure (with metadata and transactions)
+    override suspend fun fetchEvents(command: Pair<OrderCommand, UserContext>, txn: Connection) = /* ... */
+        override suspend fun save(events: Sequence<OrderEvent>, metadata: UserContext, txn: Connection) = /* ... */
+            override suspend fun <T> inTransaction(block: suspend (Connection) -> T): T = /* ... */
 }
 
 // Composition happens automatically - handle() is now available
 val result = orderSystem.handle(PlaceOrder(...) to UserContext(userId = "123"))
 ```
-
-### 5. SystemSpecification (Testing DSL)
-
-`src/SystemSpecification.kt` — Given-When-Then specification DSL
-
-A lightweight DSL for specifying and verifying system behavior in both event-sourced and state-stored styles:
-
-**Event-sourced** — given past events, when a command is issued, then expect new events:
-
-```kotlin
-counterSystem.givenEvents(emptyList()) {
-    whenCommand(IncrementCounterCommand.Increment(5))
-} thenEvents listOf(IncrementCounterEvent.Incremented(5, 5))
-```
-
-**State-stored** — given a current state, when a command is issued, then expect a new state:
-
-```kotlin
-counterSystem.givenState(CounterState(0, 0)) {
-    whenCommand(IncrementCounterCommand.Increment(5))
-} thenState CounterState(incValue = 5, decValue = 0)
-```
-
-| Function       | Role      | Works with                                  |
-|----------------|-----------|---------------------------------------------|
-| `givenEvents`  | **Given** | `IDynamicSystem` (InEvent ≠ OutEvent)       |
-| `givenState`   | **Given** | `ISystem` (state-stored)                    |
-| `whenCommand`  | **When**  | Any command type                            |
-| `thenEvents`   | **Then**  | Asserts produced events match expected      |
-| `thenState`    | **Then**  | Asserts resulting state matches expected    |
 
 ## Algebraic View
 
@@ -255,9 +274,13 @@ counterSystem.givenState(CounterState(0, 0)) {
 
 ## Why Systems Thinking Matters in the AI Era
 
-As software engineering continues to raise the level of abstraction through AI, systems thinking becomes even more essential. While AI tools grow increasingly powerful at generating code, the real value lies in understanding how components interact, how decisions ripple through ecosystems, and how to design resilient, adaptable systems.
+As software engineering continues to raise the level of abstraction through AI, systems thinking becomes even more
+essential. While AI tools grow increasingly powerful at generating code, the real value lies in understanding how
+components interact, how decisions ripple through ecosystems, and how to design resilient, adaptable systems.
 
-This library embodies that philosophy: composable algebraic structures that let you reason about system behavior at a higher level. When AI assists in implementation, your focus shifts to architecture, composition, and the invariants that matter—exactly where human insight creates the most value.
+This library embodies that philosophy: composable algebraic structures that let you reason about system behavior at a
+higher level. When AI assists in implementation, your focus shifts to architecture, composition, and the invariants that
+matter—exactly where human insight creates the most value.
 
 ## Data & Behaviour = Information (Algebra of the Business)
 

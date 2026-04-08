@@ -375,7 +375,7 @@ private val decrementCounterSystem =
  * - Useful in testing or as a placeholder system.
  * - Proves that `GeneralSystem` with `_combine` and `emptySystem` forms a Monoid.
  */
-private val emptySystem = GeneralSystem<Nothing?, Unit, Unit, Nothing?, Nothing?>(
+private val emptySystem = GeneralSystem</*Nothing*/Unit?, Unit, Unit, /*Nothing*/Unit?, Nothing?>(
     decide = { _, _ -> emptySequence() },
     evolve = { _, _ -> Unit },
     initialState = { Unit }
