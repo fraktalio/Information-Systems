@@ -31,7 +31,7 @@ interface ISystem<in Command, State, Event> : IDynamicSystem<Command, State, Eve
 }
 
 data class System<Command, State, Event>(
-    override val decide: (Command, State) -> Sequence<Event>,
+    override val decide: (Command, State) -> List<Event>,
     override val evolve: (State, Event) -> State,
     override val initialState: () -> State
 ) : ISystem<Command, State, Event>

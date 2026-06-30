@@ -31,14 +31,14 @@ typealias StateStoredSystem<Command, State> = (Command, State?) -> State
  *
  * Formally:
  * ```
- * Command × Sequence<Event> → Sequence<Event>
+ * Command × List<Event> → List<Event>
  * ```
  *
  * @param Command The intent to modify the system.
  * @param InEvent   A recorded, immutable state transition.
  * @param OutEvent  A new recorded, immutable state transition.
  */
-typealias EventSourcedSystem<Command, InEvent, OutEvent> = (Command, Sequence<InEvent>) -> Sequence<OutEvent>
+typealias EventSourcedSystem<Command, InEvent, OutEvent> = (Command, List<InEvent>) -> List<OutEvent>
 
 
 /**
@@ -58,13 +58,13 @@ typealias EventSourcedSystem<Command, InEvent, OutEvent> = (Command, Sequence<In
  * @param OutEvent   The new recorded state transition / output event(s).
  */
 interface IGeneralSystem<in Command, in InState, out OutState, in InEvent, out OutEvent> {
-    val decide: (Command, InState) -> Sequence<OutEvent>
+    val decide: (Command, InState) -> List<OutEvent>
     val evolve: (InState, InEvent) -> OutState
     val initialState: () -> OutState
 }
 
 data class GeneralSystem<in Command, in InState, out OutState, in InEvent, out OutEvent>(
-    override val decide: (Command, InState) -> Sequence<OutEvent>,
+    override val decide: (Command, InState) -> List<OutEvent>,
     override val evolve: (InState, InEvent) -> OutState,
     override val initialState: () -> OutState,
 ) : IGeneralSystem<Command, InState, OutState, InEvent, OutEvent>
@@ -180,7 +180,7 @@ fun <Command, InState, OutState, InEvent, OutEvent, OutState2>
     ff: GeneralSystem<Command, InState, (OutState) -> OutState2, InEvent, OutEvent>
 ): GeneralSystem<Command, InState, OutState2, InEvent, OutEvent> =
     GeneralSystem(
-        decide = { c, si -> sequenceOf(ff.decide(c, si), decide(c, si)).flatten() },
+        decide = { c, si -> ff.decide(c, si) + decide(c, si) },
         evolve = { si, ei -> ff.evolve(si, ei)(evolve(si, ei)) },
         initialState = { ff.initialState()(initialState()) }
     )
@@ -287,8 +287,8 @@ private val incrementCounterSystem =
     GeneralSystem<IncrementCounterCommand?, IncrementCounterState, IncrementCounterState, IncrementCounterEvent?, IncrementCounterEvent?>(
         decide = { cmd, _ ->
             when (cmd) {
-                IncrementCounterCommand.Increment -> sequenceOf(IncrementCounterEvent.Incremented)
-                null -> emptySequence() // ignore unrelated commands
+                IncrementCounterCommand.Increment -> listOf(IncrementCounterEvent.Incremented)
+                null -> emptyList() // ignore unrelated commands
             }
         },
         evolve = { state, event ->
@@ -325,8 +325,8 @@ private val decrementCounterSystem =
     GeneralSystem<DecrementCounterCommand?, DecrementCounterState, DecrementCounterState, DecrementCounterEvent?, DecrementCounterEvent?>(
         decide = { cmd, _ ->
             when (cmd) {
-                DecrementCounterCommand.Decrement -> sequenceOf(DecrementCounterEvent.Decremented)
-                null -> emptySequence() // ignore unrelated commands
+                DecrementCounterCommand.Decrement -> listOf(DecrementCounterEvent.Decremented)
+                null -> emptyList() // ignore unrelated commands
             }
         },
         evolve = { state, event ->
@@ -376,7 +376,7 @@ private val decrementCounterSystem =
  * - Proves that `GeneralSystem` with `_combine` and `emptySystem` forms a Monoid.
  */
 private val emptySystem = GeneralSystem</*Nothing*/Unit?, Unit, Unit, /*Nothing*/Unit?, Nothing?>(
-    decide = { _, _ -> emptySequence() },
+    decide = { _, _ -> emptyList() },
     evolve = { _, _ -> Unit },
     initialState = { Unit }
 )

@@ -7,7 +7,7 @@ event-sourced (🌀 store past events) architectures under a single model.
 
 ```kotlin
 typealias StateStoredSystem<Command, State> = (Command, State?) -> State
-typealias EventSourcedSystem<Command, InEvent, OutEvent> = (Command, Sequence<InEvent>) -> Sequence<OutEvent>
+typealias EventSourcedSystem<Command, InEvent, OutEvent> = (Command, List<InEvent>) -> List<OutEvent>
 ```
 
 ## The Journey: From General to Specific
@@ -17,7 +17,7 @@ builds upon the previous one through specialization:
 
 ```kotlin
 interface IGeneralSystem<in Command, in InState, out OutState, in InEvent, out OutEvent> {
-    val decide: (Command, InState) -> Sequence<OutEvent>
+    val decide: (Command, InState) -> List<OutEvent>
     val evolve: (InState, InEvent) -> OutState
     val initialState: () -> OutState
 
@@ -79,7 +79,7 @@ in is a type error. This is why `IGeneralSystem` cannot produce an `EventSourced
 decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
 ```
 
-`decide` returns `Sequence<OutEvent>`. `evolve` expects `InEvent`. If `InEvent ≠ OutEvent`, you can't pass output events
+`decide` returns `List<OutEvent>`. `evolve` expects `InEvent`. If `InEvent ≠ OutEvent`, you can't pass output events
 into `evolve`. This is why `IDynamicSystem` (which already unifies state but not events) cannot produce a
 `StateStoredSystem`.
 
@@ -96,7 +96,7 @@ folds and support both conversions.
 ┌─────────────────────────────────────────────────────────────────┐
 │ IGeneralSystem<Command, InState, OutState, InEvent, OutEvent>  │
 │ (5 type parameters - most general)                              │
-│ • decide: (Command, InState) -> Sequence<OutEvent>              │
+│ • decide: (Command, InState) -> List<OutEvent>                  │
 │ • evolve: (InState, InEvent) -> OutState                        │
 │ • initialState: () -> OutState                                  │
 └────────────────────────────┬────────────────────────────────────┘
@@ -150,7 +150,7 @@ The most general form that captures all possible information systems:
 
 ```kotlin
 interface IGeneralSystem<Command, InState, OutState, InEvent, OutEvent> {
-    val decide: (Command, InState) -> Sequence<OutEvent>
+    val decide: (Command, InState) -> List<OutEvent>
     val evolve: (InState, InEvent) -> OutState
     val initialState: () -> OutState
 }
@@ -250,17 +250,17 @@ interface IStateRepository<Command, CommandMetadata, State, StateMetadata, Txn> 
 }
 
 interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Txn> {
-    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>, txn: Txn): Sequence<Pair<InEvent, InEventMetadata>>
+    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>, txn: Txn): List<Pair<InEvent, InEventMetadata>>
     suspend fun save(
-        events: Sequence<OutEvent>,
+        events: List<OutEvent>,
         commandMetadata: CommandMetadata,
         txn: Txn
-    ): Sequence<Pair<OutEvent, OutEventMetadata>>
+    ): List<Pair<OutEvent, OutEventMetadata>>
     suspend fun <T> inTransaction(block: suspend (Txn) -> T): T
     suspend fun process(
         command: Pair<Command, CommandMetadata>,
         system: EventSourcedSystem<Command, InEvent, OutEvent>
-    ): Sequence<Pair<OutEvent, OutEventMetadata>>
+    ): List<Pair<OutEvent, OutEventMetadata>>
 }
 ```
 
@@ -282,7 +282,7 @@ domain layer.
 Domain systems (`IGeneralSystem`, `IDynamicSystem`, `ISystem`) remain pure and focused on business logic:
 
 ```kotlin
-decide: (Command, State) -> Sequence<Event>  // No metadata here
+decide: (Command, State) -> List<Event>  // No metadata here
 ```
 
 Metadata is introduced at the repository level for infrastructure concerns:
@@ -308,7 +308,7 @@ The `handle` extension functions demonstrate elegant composition at the type lev
 
 ```kotlin
 suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata, Txn>
-        SYSTEM.handle(command: Pair<Command, CommandMetadata>): Sequence<Pair<Event, EventMetadata>>
+        SYSTEM.handle(command: Pair<Command, CommandMetadata>): List<Pair<Event, EventMetadata>>
         where SYSTEM : IEventRepository<Command, CommandMetadata, Event, EventMetadata, Event, EventMetadata, Txn>,
               SYSTEM : ISystem<Command, State, Event> =
     process(command, inEventSourcedSystem())
@@ -336,7 +336,7 @@ class OrderSystem :
 
     // Infrastructure (with metadata and transactions)
     override suspend fun fetchEvents(command: Pair<OrderCommand, UserContext>, txn: Connection) = /* ... */
-        override suspend fun save(events: Sequence<OrderEvent>, metadata: UserContext, txn: Connection) = /* ... */
+        override suspend fun save(events: List<OrderEvent>, metadata: UserContext, txn: Connection) = /* ... */
             override suspend fun <T> inTransaction(block: suspend (Connection) -> T): T = /* ... */
 }
 

@@ -17,7 +17,7 @@ interface IDynamicSystem<in Command, State, in InEvent, out OutEvent> :
      * This handles reconstructing state from a sequence of events and producing
      * new events in response to a command.
      *
-     * @return An EventSourcedSystem function `(Command, Sequence<InEvent>) -> Sequence<OutEvent>`
+     * @return An EventSourcedSystem function `(Command, List<InEvent>) -> List<OutEvent>`
      */
     fun inEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
         { command, events ->
@@ -34,7 +34,7 @@ interface IDynamicSystem<in Command, State, in InEvent, out OutEvent> :
 }
 
 data class DynamicSystem<Command, State, InEvent, OutEvent>(
-    override val decide: (Command, State) -> Sequence<OutEvent>,
+    override val decide: (Command, State) -> List<OutEvent>,
     override val evolve: (State, InEvent) -> State,
     override val initialState: () -> State
 ) : IDynamicSystem<Command, State, InEvent, OutEvent>

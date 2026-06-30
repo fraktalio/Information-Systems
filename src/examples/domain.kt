@@ -9,21 +9,21 @@ val counterSystem =
     System<CounterCommand?, CounterState, CounterEvent?>(
         decide = { cmd, state ->
             when (cmd) {
-                is IncrementCounterCommand.Increment -> sequenceOf(
+                is IncrementCounterCommand.Increment -> listOf(
                     IncrementCounterEvent.Incremented(
                         cmd.value,
                         state.incValue + cmd.value
                     )
                 )
 
-                is DecrementCounterCommand.Decrement -> sequenceOf(
+                is DecrementCounterCommand.Decrement -> listOf(
                     DecrementCounterEvent.Decremented(
                         cmd.value,
                         state.decValue + cmd.value
                     )
                 )
 
-                null -> emptySequence()
+                null -> emptyList()
             }
         },
         evolve = { state, event ->
@@ -46,14 +46,14 @@ private val incrementCounterSubSystem =
     System<IncrementCounterCommand?, IncrementCounterState, IncrementCounterEvent?>(
         decide = { cmd, state ->
             when (cmd) {
-                is IncrementCounterCommand.Increment -> sequenceOf(
+                is IncrementCounterCommand.Increment -> listOf(
                     IncrementCounterEvent.Incremented(
                         cmd.value,
                         state.value + cmd.value
                     )
                 )
 
-                null -> emptySequence()
+                null -> emptyList()
             }
         },
         evolve = { state, event ->
@@ -71,14 +71,14 @@ private val decrementCounterSubSystem =
     System<DecrementCounterCommand?, DecrementCounterState, DecrementCounterEvent?>(
         decide = { cmd, state ->
             when (cmd) {
-                is DecrementCounterCommand.Decrement -> sequenceOf(
+                is DecrementCounterCommand.Decrement -> listOf(
                     DecrementCounterEvent.Decremented(
                         cmd.value,
                         state.value + cmd.value
                     )
                 )
 
-                null -> emptySequence()
+                null -> emptyList()
             }
         },
         evolve = { state, event ->

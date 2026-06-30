@@ -30,12 +30,12 @@ package com.fraktalio
  *
  * @param events the history of input events to reconstruct state from
  * @param command a lambda producing the command to execute
- * @return the sequence of output events produced by the system
+ * @return the list of output events produced by the system
  */
 fun <Command, State, InEvent, OutEvent> IDynamicSystem<Command, State, InEvent, OutEvent>.givenEvents(
     events: Iterable<InEvent>,
     command: () -> Command
-): Sequence<OutEvent> = decide(command(), events.fold(initialState()) { s, e -> evolve(s, e) })
+): List<OutEvent> = decide(command(), events.fold(initialState()) { s, e -> evolve(s, e) })
 
 /**
  * Identity function that serves as a readable **when** step in the DSL.
@@ -51,9 +51,8 @@ fun <Command> whenCommand(command: Command): Command = command
  * @param expected the expected output events
  * @throws IllegalStateException if actual events do not match [expected]
  */
-infix fun <OutEvent> Sequence<OutEvent>.thenEvents(expected: Iterable<OutEvent>) {
-    val actual = toList()
-    check(actual == expected.toList()) { "Expected: ${expected.toList()}, but got: $actual" }
+infix fun <OutEvent> List<OutEvent>.thenEvents(expected: Iterable<OutEvent>) {
+    check(this == expected.toList()) { "Expected: ${expected.toList()}, but got: $this" }
 }
 
 /**

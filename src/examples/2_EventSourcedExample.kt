@@ -24,7 +24,7 @@ fun main() {
 
     for (cmd in commands) {
         // Generate new events from the current command and full event history
-        val newEvents = system(cmd, allEvents.asSequence()).toList()
+        val newEvents = system(cmd, allEvents)
 
         // Append new events to the history log
         allEvents += newEvents

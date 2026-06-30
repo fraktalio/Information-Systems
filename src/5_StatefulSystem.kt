@@ -149,7 +149,7 @@ interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, O
      * @param txn The transaction handle to use for this operation
      * @return A sequence of events paired with their metadata, may be empty
      */
-    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>, txn: Txn): Sequence<Pair<InEvent, InEventMetadata>>
+    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>, txn: Txn): List<Pair<InEvent, InEventMetadata>>
 
     /**
      * Persists a sequence of events with metadata.
@@ -160,10 +160,10 @@ interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, O
      * @return The newly saved sequence of events with their generated metadata
      */
     suspend fun save(
-        events: Sequence<OutEvent>,
+        events: List<OutEvent>,
         commandMetadata: CommandMetadata,
         txn: Txn
-    ): Sequence<Pair<OutEvent, OutEventMetadata>>
+    ): List<Pair<OutEvent, OutEventMetadata>>
 
     /**
      * Executes a block within a transaction, managing the transaction lifecycle (begin, commit, rollback).
@@ -207,7 +207,7 @@ interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, O
     suspend fun process(
         command: Pair<Command, CommandMetadata>,
         system: EventSourcedSystem<Command, InEvent, OutEvent>
-    ): Sequence<Pair<OutEvent, OutEventMetadata>> = inTransaction { txn ->
+    ): List<Pair<OutEvent, OutEventMetadata>> = inTransaction { txn ->
         val pastEvents = fetchEvents(command, txn).map { it.first }
         val newEvents = system(command.first, pastEvents)
         save(newEvents, command.second, txn)
@@ -231,7 +231,8 @@ interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, O
  * @param command The command paired with metadata (e.g., user context, correlation ID)
  * @return The resulting sequence of events paired with metadata (e.g., sequence numbers, timestamps)
  */
-suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata, Txn> SYSTEM.handle(command: Pair<Command, CommandMetadata>): Sequence<Pair<Event, EventMetadata>>
+@JvmName("handleSystem")
+suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata, Txn> SYSTEM.handle(command: Pair<Command, CommandMetadata>): List<Pair<Event, EventMetadata>>
         where SYSTEM : IEventRepository<Command, CommandMetadata, Event, EventMetadata, Event, EventMetadata, Txn>,
               SYSTEM : ISystem<Command, State, Event> =
     process(command, inEventSourcedSystem())
@@ -254,9 +255,10 @@ suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata, Txn>
  * @param command The command paired with metadata (e.g., user context, correlation ID)
  * @return The resulting sequence of events paired with metadata (e.g., sequence numbers, timestamps)
  */
+@JvmName("handleDynamicSystem")
 suspend fun <SYSTEM, Command, State, InEvent, OutEvent, CommandMetadata, InEventMetadata, OutEventMetadata, Txn> SYSTEM.handle(
     command: Pair<Command, CommandMetadata>
-): Sequence<Pair<OutEvent, OutEventMetadata>>
+): List<Pair<OutEvent, OutEventMetadata>>
         where SYSTEM : IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Txn>,
               SYSTEM : IDynamicSystem<Command, State, InEvent, OutEvent> =
     process(command, inEventSourcedSystem())
