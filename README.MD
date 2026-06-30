@@ -5,10 +5,92 @@
 Information systems as composable algebraic structures. Unifies state-stored (🏛️ store current state) and
 event-sourced (🌀 store past events) architectures under a single model.
 
+```kotlin
+typealias StateStoredSystem<Command, State> = (Command, State?) -> State
+typealias EventSourcedSystem<Command, InEvent, OutEvent> = (Command, Sequence<InEvent>) -> Sequence<OutEvent>
+```
+
 ## The Journey: From General to Specific
 
 The library is structured as a progression from the most general abstraction to practical implementations. Each file
 builds upon the previous one through specialization:
+
+```kotlin
+interface IGeneralSystem<in Command, in InState, out OutState, in InEvent, out OutEvent> {
+    val decide: (Command, InState) -> Sequence<OutEvent>
+    val evolve: (InState, InEvent) -> OutState
+    val initialState: () -> OutState
+
+    //    We CAN NOT convert general system into EventSourcedSystem !!!
+    //    fun inEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
+    //        { command, events ->
+    //           decide(command, events.fold(initialState()) { acc, event -> evolve(acc, event) })
+    //         }
+
+    //    We CAN NOT convert general system into StateStoredSystem !!!
+    //    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+    //        { command, state ->
+    //            val current = state ?: initialState()
+    //            decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
+    //        }
+}
+
+interface IDynamicSystem<in Command, State, in InEvent, out OutEvent> :
+    IGeneralSystem<Command, State, State, InEvent, OutEvent> {
+
+    fun inEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
+        { command, events ->
+            decide(command, events.fold(initialState()) { acc, event -> evolve(acc, event) })
+        }
+    //    We CAN NOT convert dynamic system into StateStoredSystem !!!
+    //    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+    //        { command, state ->
+    //            val current = state ?: initialState()
+    //            decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
+    //        }
+}
+
+interface ISystem<in Command, State, Event> : IDynamicSystem<Command, State, Event, Event> {
+
+    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+        { command, state ->
+            val current = state ?: initialState()
+            decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
+        }
+}
+```
+
+### Why conversions require type unification
+
+Each level unlocks a new conversion, and the reason is purely type-level. The key operations are two folds:
+
+**Fold 1 — reconstruct state from events** (needed by `EventSourcedSystem`):
+
+```
+events.fold(initialState()) { acc, event -> evolve(acc, event) }
+```
+
+`initialState()` returns `OutState`. `evolve` expects `InState`. If `InState ≠ OutState`, feeding the accumulator back
+in is a type error. This is why `IGeneralSystem` cannot produce an `EventSourcedSystem` — the loop can't close.
+
+**Fold 2 — fold output events back into state** (needed by `StateStoredSystem`):
+
+```
+decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
+```
+
+`decide` returns `Sequence<OutEvent>`. `evolve` expects `InEvent`. If `InEvent ≠ OutEvent`, you can't pass output events
+into `evolve`. This is why `IDynamicSystem` (which already unifies state but not events) cannot produce a
+`StateStoredSystem`.
+
+Only `ISystem`, which unifies both (`InState == OutState == State` and `InEvent == OutEvent == Event`), can close both
+folds and support both conversions.
+
+| System           | `InState == OutState` | `InEvent == OutEvent` | → `EventSourcedSystem` | → `StateStoredSystem` |
+|------------------|-----------------------|-----------------------|------------------------|-----------------------|
+| `IGeneralSystem` | ✗                     | ✗                     | ✗ (Fold 1 breaks)      | ✗                     |
+| `IDynamicSystem` | ✓                     | ✗                     | ✓                      | ✗ (Fold 2 breaks)     |
+| `ISystem`        | ✓                     | ✓                     | ✓                      | ✓                     |
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
