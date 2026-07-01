@@ -86,11 +86,16 @@ into `evolve`. This is why `IDynamicSystem` (which already unifies state but not
 Only `ISystem`, which unifies both (`InState == OutState == State` and `InEvent == OutEvent == Event`), can close both
 folds and support both conversions.
 
-| System           | `InState == OutState` | `InEvent == OutEvent` | → `EventSourcedSystem` | → `StateStoredSystem` |
-|------------------|-----------------------|-----------------------|------------------------|-----------------------|
-| `IGeneralSystem` | ✗                     | ✗                     | ✗ (Fold 1 breaks)      | ✗                     |
-| `IDynamicSystem` | ✓                     | ✗                     | ✓                      | ✗ (Fold 2 breaks)     |
-| `ISystem`        | ✓                     | ✓                     | ✓                      | ✓                     |
+| System           | `InState == OutState` | `InEvent == OutEvent` | → `EventSourcedSystem`          | → `StateStoredSystem` |
+|------------------|-----------------------|-----------------------|---------------------------------|-----------------------|
+| `IGeneralSystem` | ✗                     | ✗                     | ✗ (Fold 1 breaks)               | ✗                     |
+| `IDynamicSystem` | ✓                     | ✗                     | ✓ full (InEvent ≠ OutEvent)     | ✗ (Fold 2 breaks)     |
+| `ISystem`        | ✓                     | ✓                     | ✓ limited (InEvent == OutEvent) | ✓                     |
+
+**The tradeoff at `ISystem`:** constraining `InEvent == OutEvent` to unlock `StateStoredSystem` also weakens event
+sourcing. `IDynamicSystem` supports heterogeneous event types — you can read a `InEvent`
+and produce `OutEvent`. `ISystem` collapses these to a single `Event` type, so
+the events you read must be exactly the events you write.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
