@@ -22,7 +22,7 @@ interface ISystem<in Command, State, Event> : IDynamicSystem<Command, State, Eve
      *
      * @return A StateStoredSystem function `(Command, State?) -> State`
      */
-    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+    fun asStateStoredSystem(): StateStoredSystem<Command, State> =
         { command, state ->
             val current = state ?: initialState()
             decide(command, current).fold(current) { acc, event -> evolve(acc, event) }

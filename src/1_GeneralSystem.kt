@@ -401,7 +401,9 @@ private data class CounterState(val value: Int) {
 
 private val counterSystem: GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?> =
     incrementCounterSystem
-        .combine(decrementCounterSystem) // GeneralSystem<CounterCommand?, Pair<IncrementCounterState, DecrementCounterState>, Pair<IncrementCounterState, DecrementCounterState>, CounterEvent?, CounterEvent?>
+        .combine<IncrementCounterCommand, DecrementCounterCommand, IncrementCounterEvent, DecrementCounterEvent, IncrementCounterEvent, DecrementCounterEvent, CounterCommand, IncrementCounterState, IncrementCounterState, CounterEvent?, CounterEvent, DecrementCounterState, DecrementCounterState>(
+            decrementCounterSystem
+        ) // GeneralSystem<CounterCommand?, Pair<IncrementCounterState, DecrementCounterState>, Pair<IncrementCounterState, DecrementCounterState>, CounterEvent?, CounterEvent?>
         .mapState(
             { counterState -> Pair(IncrementCounterState(counterState.value), DecrementCounterState(0)) },
             { pair -> CounterState(pair.first.value + pair.second.value) }) // GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>
@@ -422,7 +424,9 @@ private val counterSystem: GeneralSystem<CounterCommand?, CounterState, CounterS
  */
 private val counterSystem1: GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?> =
     counterSystem
-        .combine(emptySystem) // GeneralSystem<CounterCommand?, Pair<CounterState, Unit>, Pair<CounterState, Unit>, CounterEvent?, CounterEvent?>
+        .combine<CounterCommand, Unit, CounterEvent, Unit, CounterEvent, CounterEvent, Any?, CounterState, CounterState, Any?, CounterEvent, Unit, Unit>(
+            emptySystem
+        ) // GeneralSystem<CounterCommand?, Pair<CounterState, Unit>, Pair<CounterState, Unit>, CounterEvent?, CounterEvent?>
         .mapState(
             { counterState -> Pair(CounterState(counterState.value), Unit) },
             { pair -> pair.first }) // GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?>

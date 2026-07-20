@@ -7,7 +7,7 @@ fun main() {
 
     // Observe the API of the Event Sourced System! No State, only Command(s) and Event(s)
     val system: EventSourcedSystem<CounterCommand?, CounterEvent?, CounterEvent?> =
-        counterSystemCombined.inEventSourcedSystem()
+        counterSystemCombined.asEventSourcedSystem()
 
     // Start with an empty event log
     var allEvents: List<CounterEvent?> = emptyList()

@@ -19,14 +19,14 @@ interface IDynamicSystem<in Command, State, in InEvent, out OutEvent> :
      *
      * @return An EventSourcedSystem function `(Command, List<InEvent>) -> List<OutEvent>`
      */
-    fun inEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
+    fun asEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
         { command, events ->
             decide(command, events.fold(initialState()) { acc, event -> evolve(acc, event) })
         }
 
     // We CAN NOT convert dynamic system into StateStoredSystem !!!
 
-//    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+//    fun asStateStoredSystem(): StateStoredSystem<Command, State> =
 //        { command, state ->
 //            val current = state ?: initialState()
 //            decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
@@ -118,5 +118,7 @@ inline infix fun <
         OutEvent_SUPER?
         > =
     GeneralSystem(decide, evolve, initialState)
-        .combine(GeneralSystem(other.decide, other.evolve, other.initialState))
+        .combine<C, C2, InEvent, InEvent2, OutEvent, OutEvent2, C_SUPER, State, State, InEvent_SUPER, OutEvent_SUPER, State2, State2>(
+            GeneralSystem(other.decide, other.evolve, other.initialState)
+        )
         .asDynamicSystem()

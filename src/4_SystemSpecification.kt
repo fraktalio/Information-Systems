@@ -58,7 +58,7 @@ infix fun <OutEvent> List<OutEvent>.thenEvents(expected: Iterable<OutEvent>) {
 /**
  * **Given** a current [state], **when** a [command] is issued, produce the new state.
  *
- * Delegates to [ISystem.inStateStoredSystem], which folds the events
+ * Delegates to [ISystem.asStateStoredSystem], which folds the events
  * produced by [ISystem.decide] via [ISystem.evolve] into the resulting state.
  *
  * @param state the current state of the system
@@ -68,7 +68,7 @@ infix fun <OutEvent> List<OutEvent>.thenEvents(expected: Iterable<OutEvent>) {
 fun <Command, State, Event> ISystem<Command, State, Event>.givenState(
     state: State,
     command: () -> Command
-): State = inStateStoredSystem()(command(), state)
+): State = asStateStoredSystem()(command(), state)
 
 /**
  * **Then** assert that the resulting state matches the [expected] state.

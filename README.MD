@@ -22,13 +22,13 @@ interface IGeneralSystem<in Command, in InState, out OutState, in InEvent, out O
     val initialState: () -> OutState
 
     //    We CAN NOT convert general system into EventSourcedSystem !!!
-    //    fun inEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
+    //    fun asEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
     //        { command, events ->
     //           decide(command, events.fold(initialState()) { acc, event -> evolve(acc, event) })
     //         }
 
     //    We CAN NOT convert general system into StateStoredSystem !!!
-    //    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+    //    fun asStateStoredSystem(): StateStoredSystem<Command, State> =
     //        { command, state ->
     //            val current = state ?: initialState()
     //            decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
@@ -38,12 +38,12 @@ interface IGeneralSystem<in Command, in InState, out OutState, in InEvent, out O
 interface IDynamicSystem<in Command, State, in InEvent, out OutEvent> :
     IGeneralSystem<Command, State, State, InEvent, OutEvent> {
 
-    fun inEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
+    fun asEventSourcedSystem(): EventSourcedSystem<Command, InEvent, OutEvent> =
         { command, events ->
             decide(command, events.fold(initialState()) { acc, event -> evolve(acc, event) })
         }
     //    We CAN NOT convert dynamic system into StateStoredSystem !!!
-    //    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+    //    fun asStateStoredSystem(): StateStoredSystem<Command, State> =
     //        { command, state ->
     //            val current = state ?: initialState()
     //            decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
@@ -52,7 +52,7 @@ interface IDynamicSystem<in Command, State, in InEvent, out OutEvent> :
 
 interface ISystem<in Command, State, Event> : IDynamicSystem<Command, State, Event, Event> {
 
-    fun inStateStoredSystem(): StateStoredSystem<Command, State> =
+    fun asStateStoredSystem(): StateStoredSystem<Command, State> =
         { command, state ->
             val current = state ?: initialState()
             decide(command, current).fold(current) { acc, event -> evolve(acc, event) }
@@ -142,8 +142,8 @@ the events you read must be exactly the events you write.
 │ IStateRepository / IEventRepository                             │
 │ (Infrastructure layer - metadata + transaction support)          │
 │ • Metadata never leaks into domain                               │
-│ • Explicit transaction handle (Txn) for atomicity               │
-│ • inTransaction / handle() extension functions                   │
+│ • Explicit transaction handle (Txn), supplied via context param  │
+│ • executeInTransaction (shared via ITransactional) / handle()    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -244,28 +244,34 @@ counterSystem.givenState(CounterState(0, 0)) {
 Adds repository interfaces for persistence with metadata and explicit transaction support:
 
 ```kotlin
-interface IStateRepository<Command, CommandMetadata, State, StateMetadata, Txn> {
-    suspend fun fetchState(command: Pair<Command, CommandMetadata>, txn: Txn): Pair<State, StateMetadata>?
-    suspend fun save(state: Pair<State, CommandMetadata>, txn: Txn): Pair<State, StateMetadata>
-    suspend fun <T> inTransaction(block: suspend (Txn) -> T): T
-    suspend fun process(
-        command: Pair<Command, CommandMetadata>,
-        system: StateStoredSystem<Command, State>
-    ): Pair<State, StateMetadata>
+interface ITransactional<Txn> {
+    suspend fun <T> executeInTransaction(block: suspend (Txn) -> T): T
 }
 
-interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Txn> {
-    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>, txn: Txn): List<Pair<InEvent, InEventMetadata>>
+interface IStateRepository<Command, CommandMetadata, State, StateMetadata, Txn> : ITransactional<Txn> {
+    context(txn: Txn)
+    suspend fun fetchState(command: Pair<Command, CommandMetadata>): Pair<State, StateMetadata>?
+
+    context(txn: Txn)
+    suspend fun save(state: Pair<State, CommandMetadata>): Pair<State, StateMetadata>
+
+    context(system: StateStoredSystem<Command, State>)
+    suspend fun handle(command: Pair<Command, CommandMetadata>): Pair<State, StateMetadata>
+}
+
+interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Txn> :
+    ITransactional<Txn> {
+    context(txn: Txn)
+    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>): List<Pair<InEvent, InEventMetadata>>
+
+    context(txn: Txn)
     suspend fun save(
         events: List<OutEvent>,
-        commandMetadata: CommandMetadata,
-        txn: Txn
+        commandMetadata: CommandMetadata
     ): List<Pair<OutEvent, OutEventMetadata>>
-    suspend fun <T> inTransaction(block: suspend (Txn) -> T): T
-    suspend fun process(
-        command: Pair<Command, CommandMetadata>,
-        system: EventSourcedSystem<Command, InEvent, OutEvent>
-    ): List<Pair<OutEvent, OutEventMetadata>>
+
+    context(system: EventSourcedSystem<Command, InEvent, OutEvent>)
+    suspend fun handle(command: Pair<Command, CommandMetadata>): List<Pair<OutEvent, OutEventMetadata>>
 }
 ```
 
@@ -273,10 +279,12 @@ This provides:
 
 - Separation of domain logic from persistence
 - Explicit transaction handle (`Txn`) for atomicity — the fetch → compute → save sequence runs within a single
-  transaction
+  transaction, with `Txn` threaded to `fetchState`/`fetchEvents` and `save` as a context parameter instead of an
+  explicit argument
 - Flexible locking strategy: pessimistic (e.g., `SELECT ... FOR UPDATE`) or optimistic (e.g.,
   `UPDATE ... WHERE version = ?`)
-- Convenient `handle` extension functions
+- `executeInTransaction` factored into a shared `ITransactional<Txn>` interface, since the transaction lifecycle
+  is identical for both repositories — only the persisted shape (state vs. events) differs
 - Metadata support at infrastructure/application level
 
 #### Metadata: Infrastructure Concern, Not Domain Concern
@@ -298,7 +306,7 @@ Metadata is introduced at the repository level for infrastructure concerns:
 - Event sequence numbers and timestamps
 - Tenant/user context for multi-tenancy
 
-The `process` method orchestrates the flow:
+The `handle` method orchestrates the flow:
 
 1. Fetch data with metadata from storage
 2. Extract pure domain data and pass to domain system (metadata-free)
@@ -307,25 +315,27 @@ The `process` method orchestrates the flow:
 
 This separation keeps domain logic testable, composable, and free from infrastructure concerns.
 
-#### Composition Through Multiple Type Constraints
+#### Composition Through Context Parameters
 
-The `handle` extension functions demonstrate elegant composition at the type level:
+`handle` takes the domain system as a context parameter rather than an explicit argument, so a caller supplies it by
+opening a `context(...)` block around the call:
 
 ```kotlin
-suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata, Txn>
-        SYSTEM.handle(command: Pair<Command, CommandMetadata>): List<Pair<Event, EventMetadata>>
-        where SYSTEM : IEventRepository<Command, CommandMetadata, Event, EventMetadata, Event, EventMetadata, Txn>,
-              SYSTEM : ISystem<Command, State, Event> =
-    process(command, inEventSourcedSystem())
+context(orderRepository.asEventSourcedSystem()) {
+    orderRepository.handle(placeOrderCommand to userContext)
+}
 ```
 
 This composition pattern:
 
-- **Type-level composition**: Any type implementing both `IEventRepository` and `ISystem` automatically gains `handle`
-  capability
-- **Separation of concerns**: Repository provides persistence, System provides domain logic
+- **Explicit context, not hidden derivation**: The domain system is derived once via `asEventSourcedSystem()` /
+  `asStateStoredSystem()` (available on any `IDynamicSystem`/`ISystem`) and passed into scope explicitly at the call
+  site
+- **Separation of concerns**: Repository provides persistence (`fetchEvents`/`fetchState`, `save`,
+  `executeInTransaction`), System provides domain logic
 - **No inheritance required**: Composition through interfaces, not class hierarchies
-- **Metadata isolation**: Domain system extracted via `inEventSourcedSystem()` remains metadata-free
+- **Metadata isolation**: The domain system extracted via `asEventSourcedSystem()`/`asStateStoredSystem()` remains
+  metadata-free
 
 Example implementation:
 
@@ -335,18 +345,26 @@ class OrderSystem :
     IEventRepository<OrderCommand, UserContext, OrderEvent, EventMetadata, OrderEvent, EventMetadata, Connection> {
 
     // Domain logic (pure)
-    override val decide = { command: OrderCommand, state: OrderState -> /* ... */ }
-    override val evolve = { state: OrderState, event: OrderEvent -> /* ... */ }
+    override val decide = { command: OrderCommand, state: OrderState -> emptyList<OrderEvent>() }
+    override val evolve = { state: OrderState, event: OrderEvent -> state }
     override val initialState = { OrderState.empty() }
 
     // Infrastructure (with metadata and transactions)
-    override suspend fun fetchEvents(command: Pair<OrderCommand, UserContext>, txn: Connection) = /* ... */
-        override suspend fun save(events: List<OrderEvent>, metadata: UserContext, txn: Connection) = /* ... */
-            override suspend fun <T> inTransaction(block: suspend (Connection) -> T): T = /* ... */
+    context(txn: Connection)
+    override suspend fun fetchEvents(command: Pair<OrderCommand, UserContext>) =
+        emptyList<Pair<OrderEvent, EventMetadata>>()
+
+    context(txn: Connection)
+    override suspend fun save(events: List<OrderEvent>, commandMetadata: UserContext) =
+        emptyList<Pair<OrderEvent, EventMetadata>>()
+
+    override suspend fun <T> executeInTransaction(block: suspend (Connection) -> T): T = block(connection)
 }
 
-// Composition happens automatically - handle() is now available
-val result = orderSystem.handle(PlaceOrder(...) to UserContext(userId = "123"))
+// system is supplied explicitly via context - not derived automatically
+context(orderSystem.asEventSourcedSystem()) {
+    val result = orderSystem.handle(placeOrderCommand to userContext)
+}
 ```
 
 ## Algebraic View

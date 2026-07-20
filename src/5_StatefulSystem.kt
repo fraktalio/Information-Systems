@@ -1,6 +1,54 @@
 package com.fraktalio
 
 // ###############################################
+//                  Transactional
+// ###############################################
+
+/**
+ * Represents a resource that can execute a block of work within a single transaction,
+ * managing the transaction lifecycle (begin, commit, rollback).
+ *
+ * Shared by [IStateRepository] and [IEventRepository] - both need identical transaction
+ * lifecycle management, only the persisted shape (state vs. events) differs.
+ *
+ * The locking strategy is left to the implementor:
+ * - **Pessimistic:** the fetch operation acquires a lock within the transaction (e.g., `SELECT ... FOR UPDATE`), held until commit
+ * - **Optimistic:** the fetch operation reads a version, the save operation checks it hasn't changed (e.g., `UPDATE ... WHERE version = ?`)
+ *
+ * Example (JDBC):
+ * ```kotlin
+ * override suspend fun <T> executeInTransaction(block: suspend (Connection) -> T): T =
+ *     dataSource.connection.use { conn ->
+ *         conn.autoCommit = false
+ *         try { block(conn).also { conn.commit() } }
+ *         catch (e: Exception) { conn.rollback(); throw e }
+ *     }
+ * ```
+ *
+ * Example (Spring Data R2DBC, `Txn = Unit` since the connection is propagated implicitly
+ * via Reactor's `Context` rather than passed around explicitly):
+ * ```kotlin
+ * override suspend fun <T> executeInTransaction(block: suspend (Unit) -> T): T =
+ *     txOperator.executeAndAwait { block(Unit) }
+ * ```
+ * `executeAndAwait` (from `org.springframework.transaction.reactive`) is the coroutine bridge for
+ * `TransactionalOperator` - no manual begin/commit/rollback or connection handle needed, since the
+ * reactive transaction manager coordinates through Reactor `Context` propagation.
+ *
+ * @param Txn Type of transaction handle (e.g., JDBC Connection, Mongo ClientSession, or Unit for in-memory)
+ */
+interface ITransactional<Txn> {
+
+    /**
+     * Executes a block within a transaction.
+     *
+     * @param block The suspending function to execute within the transaction
+     * @return The result of the block
+     */
+    suspend fun <T> executeInTransaction(block: suspend (Txn) -> T): T
+}
+
+// ###############################################
 //                  State Stored
 // ###############################################
 
@@ -22,50 +70,30 @@ package com.fraktalio
  * @param StateMetadata Type of metadata accompanying state (e.g., version, correlation ID, last modified timestamp)
  * @param Txn Type of transaction handle (e.g., JDBC Connection, Mongo ClientSession, or Unit for in-memory)
  */
-interface IStateRepository<Command, CommandMetadata, State, StateMetadata, Txn> {
+interface IStateRepository<Command, CommandMetadata, State, StateMetadata, Txn> : ITransactional<Txn> {
 
     /**
      * Fetches the current state with its metadata corresponding to a command.
      *
      * @param command The command with metadata identifying which state to fetch
-     * @param txn The transaction handle to use for this operation
+     * @param txn The transaction handle to use for this operation, supplied as a context parameter
      * @return The current state with metadata if it exists, otherwise null
      */
-    suspend fun fetchState(command: Pair<Command, CommandMetadata>, txn: Txn): Pair<State, StateMetadata>?
+    context(txn: Txn)
+    suspend fun fetchState(command: Pair<Command, CommandMetadata>): Pair<State, StateMetadata>?
 
     /**
      * Persists a new state with metadata.
      *
      * @param state The state paired with command metadata to persist
-     * @param txn The transaction handle to use for this operation
+     * @param txn The transaction handle to use for this operation, supplied as a context parameter
      * @return The saved state with its generated metadata (e.g., new version, correlation ID)
      */
-    suspend fun save(state: Pair<State, CommandMetadata>, txn: Txn): Pair<State, StateMetadata>
+    context(txn: Txn)
+    suspend fun save(state: Pair<State, CommandMetadata>): Pair<State, StateMetadata>
 
     /**
-     * Executes a block within a transaction, managing the transaction lifecycle (begin, commit, rollback).
-     *
-     * The locking strategy is left to the implementor:
-     * - **Pessimistic:** [fetchState] acquires a lock within the transaction (e.g., `SELECT ... FOR UPDATE`), held until commit
-     * - **Optimistic:** [fetchState] reads a version, [save] checks it hasn't changed (e.g., `UPDATE ... WHERE version = ?`)
-     *
-     * Example (JDBC):
-     * ```kotlin
-     * override suspend fun <T> inTransaction(block: suspend (Connection) -> T): T =
-     *     dataSource.connection.use { conn ->
-     *         conn.autoCommit = false
-     *         try { block(conn).also { conn.commit() } }
-     *         catch (e: Exception) { conn.rollback(); throw e }
-     *     }
-     * ```
-     *
-     * @param block The suspending function to execute within the transaction
-     * @return The result of the block
-     */
-    suspend fun <T> inTransaction(block: suspend (Txn) -> T): T
-
-    /**
-     * Processes a command using a given state-stored system.
+     * Handles a command using a given state-stored system.
      *
      * This method orchestrates the flow within a single transaction:
      * 1. Fetch current state (with metadata) from storage
@@ -81,38 +109,17 @@ interface IStateRepository<Command, CommandMetadata, State, StateMetadata, Txn> 
      * @param system The state-stored system to apply (pure domain logic)
      * @return The newly persisted state with metadata
      */
-    suspend fun process(
-        command: Pair<Command, CommandMetadata>,
-        system: StateStoredSystem<Command, State>
-    ): Pair<State, StateMetadata> = inTransaction { txn ->
-        val currentState: Pair<State, StateMetadata>? = fetchState(command, txn)
-        val newState: State = system(command.first, currentState?.first)
-        save(Pair(newState, command.second), txn)
+    context(system: StateStoredSystem<Command, State>)
+    suspend fun handle(
+        command: Pair<Command, CommandMetadata>
+    ): Pair<State, StateMetadata> = executeInTransaction { txn ->
+        context(txn) {
+            val currentState: Pair<State, StateMetadata>? = fetchState(command)
+            val newState: State = system(command.first, currentState?.first)
+            save(Pair(newState, command.second))
+        }
     }
 }
-
-
-/**
- * Handles a command by composing domain logic ([ISystem]) and repository operations ([IStateRepository]).
- *
- * This extension function demonstrates **composition through multiple type constraints**:
- * - `SYSTEM : IStateRepository` provides persistence capabilities (fetch, save)
- * - `SYSTEM : ISystem` provides domain logic (decide, evolve, initialState)
- *
- * The composition happens at the type level: any type implementing both interfaces
- * automatically gains the `handle` capability. The function extracts the pure domain
- * system via `inStateStoredSystem()` and passes it to the repository's `process` method.
- *
- * Metadata flows through the infrastructure layer but never enters the domain system,
- * maintaining separation of concerns.
- *
- * @param command The command paired with metadata (e.g., user context, correlation ID)
- * @return The resulting state paired with metadata (e.g., version, timestamp)
- */
-suspend fun <SYSTEM, Command, State, Event, CommandMetadata, StateMetadata, Txn> SYSTEM.handle(command: Pair<Command, CommandMetadata>): Pair<State, StateMetadata>
-        where SYSTEM : IStateRepository<Command, CommandMetadata, State, StateMetadata, Txn>,
-              SYSTEM : ISystem<Command, State, Event> =
-    process(command, inStateStoredSystem())
 
 
 // ###############################################
@@ -139,56 +146,74 @@ suspend fun <SYSTEM, Command, State, Event, CommandMetadata, StateMetadata, Txn>
  * @param OutEvent Type of output events (produced by domain logic)
  * @param OutEventMetadata Type of metadata accompanying output events (e.g., sequence number, timestamp)
  * @param Txn Type of transaction handle (e.g., JDBC Connection, Mongo ClientSession, or Unit for in-memory)
+ *
+ * Full example (Spring Data R2DBC, `Txn = Unit` since the connection is propagated implicitly
+ * via Reactor's `Context` rather than passed around explicitly - see [ITransactional] for the
+ * general shape of `executeInTransaction`):
+ * ```kotlin
+ * class R2dbcEventRepository(
+ *     private val client: DatabaseClient,
+ *     private val txOperator: TransactionalOperator
+ * ) : IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Unit> {
+ *
+ *     override suspend fun <T> executeInTransaction(block: suspend (Unit) -> T): T =
+ *         txOperator.executeAndAwait { block(Unit) }
+ *
+ *     context(txn: Unit)
+ *     override suspend fun fetchEvents(command: Pair<Command, CommandMetadata>): List<Pair<InEvent, InEventMetadata>> =
+ *         client.sql("SELECT * FROM events WHERE stream_id = :id ORDER BY sequence_number")
+ *             .bind("id", command.first)
+ *             .map { row, _ -> row.toInEvent() }
+ *             .flow()
+ *             .toList()
+ *
+ *     context(txn: Unit)
+ *     override suspend fun save(
+ *         events: List<OutEvent>,
+ *         commandMetadata: CommandMetadata
+ *     ): List<Pair<OutEvent, OutEventMetadata>> =
+ *         events.map { event ->
+ *             client.sql("INSERT INTO events (stream_id, payload, ...) VALUES (:id, :payload, ...)")
+ *                 .bind("id", event.streamId)
+ *                 .bind("payload", event.toPayload())
+ *                 .map { row, _ -> event to row.toOutEventMetadata() }
+ *                 .awaitOne()
+ *         }
+ * }
+ * ```
+ * `executeAndAwait` (from `org.springframework.transaction.reactive`) is the coroutine bridge for
+ * `TransactionalOperator` - no manual begin/commit/rollback or connection handle needed, since the
+ * reactive transaction manager and `DatabaseClient` coordinate through Reactor `Context` propagation.
  */
-interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Txn> {
+interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Txn> :
+    ITransactional<Txn> {
 
     /**
      * Fetches the current sequence of events with metadata corresponding to a command.
      *
      * @param command The command with metadata identifying which events to fetch
-     * @param txn The transaction handle to use for this operation
+     * @param txn The transaction handle to use for this operation, supplied as a context parameter
      * @return A sequence of events paired with their metadata, may be empty
      */
-    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>, txn: Txn): List<Pair<InEvent, InEventMetadata>>
+    context(txn: Txn)
+    suspend fun fetchEvents(command: Pair<Command, CommandMetadata>): List<Pair<InEvent, InEventMetadata>>
 
     /**
      * Persists a sequence of events with metadata.
      *
      * @param events The sequence of domain events to persist
      * @param commandMetadata The command metadata to attach to persisted events
-     * @param txn The transaction handle to use for this operation
+     * @param txn The transaction handle to use for this operation, supplied as a context parameter
      * @return The newly saved sequence of events with their generated metadata
      */
+    context(txn: Txn)
     suspend fun save(
         events: List<OutEvent>,
-        commandMetadata: CommandMetadata,
-        txn: Txn
+        commandMetadata: CommandMetadata
     ): List<Pair<OutEvent, OutEventMetadata>>
 
     /**
-     * Executes a block within a transaction, managing the transaction lifecycle (begin, commit, rollback).
-     *
-     * The locking strategy is left to the implementor:
-     * - **Pessimistic:** [fetchEvents] acquires a lock within the transaction (e.g., `SELECT ... FOR UPDATE`), held until commit
-     * - **Optimistic:** [fetchEvents] reads a version, [save] checks it hasn't changed (e.g., append with expected version)
-     *
-     * Example (JDBC):
-     * ```kotlin
-     * override suspend fun <T> inTransaction(block: suspend (Connection) -> T): T =
-     *     dataSource.connection.use { conn ->
-     *         conn.autoCommit = false
-     *         try { block(conn).also { conn.commit() } }
-     *         catch (e: Exception) { conn.rollback(); throw e }
-     *     }
-     * ```
-     *
-     * @param block The suspending function to execute within the transaction
-     * @return The result of the block
-     */
-    suspend fun <T> inTransaction(block: suspend (Txn) -> T): T
-
-    /**
-     * Processes a command using a given event-sourced system.
+     * Handles a command using a given event-sourced system.
      *
      * This method orchestrates the flow within a single transaction:
      * 1. Fetch past events (with metadata) from event store
@@ -204,61 +229,14 @@ interface IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, O
      * @param system The event-sourced system that produces events from a command and past events
      * @return The newly persisted sequence of events with metadata
      */
-    suspend fun process(
-        command: Pair<Command, CommandMetadata>,
-        system: EventSourcedSystem<Command, InEvent, OutEvent>
-    ): List<Pair<OutEvent, OutEventMetadata>> = inTransaction { txn ->
-        val pastEvents = fetchEvents(command, txn).map { it.first }
-        val newEvents = system(command.first, pastEvents)
-        save(newEvents, command.second, txn)
+    context(system: EventSourcedSystem<Command, InEvent, OutEvent>)
+    suspend fun handle(
+        command: Pair<Command, CommandMetadata>
+    ): List<Pair<OutEvent, OutEventMetadata>> = executeInTransaction { txn ->
+        context(txn) {
+            val pastEvents = fetchEvents(command).map { it.first }
+            val newEvents = system(command.first, pastEvents)
+            save(newEvents, command.second)
+        }
     }
 }
-
-/**
- * Handles a command by composing domain logic ([ISystem]) and event repository operations ([IEventRepository]).
- *
- * This extension function demonstrates **composition through multiple type constraints**:
- * - `SYSTEM : IEventRepository` provides event persistence capabilities (fetchEvents, save)
- * - `SYSTEM : ISystem` provides domain logic (decide, evolve, initialState)
- *
- * The composition happens at the type level: any type implementing both interfaces
- * automatically gains the `handle` capability. The function extracts the pure domain
- * system via `inEventSourcedSystem()` and passes it to the repository's `process` method.
- *
- * Metadata flows through the infrastructure layer but never enters the domain system,
- * maintaining separation of concerns.
- *
- * @param command The command paired with metadata (e.g., user context, correlation ID)
- * @return The resulting sequence of events paired with metadata (e.g., sequence numbers, timestamps)
- */
-@JvmName("handleSystem")
-suspend fun <SYSTEM, Command, State, Event, CommandMetadata, EventMetadata, Txn> SYSTEM.handle(command: Pair<Command, CommandMetadata>): List<Pair<Event, EventMetadata>>
-        where SYSTEM : IEventRepository<Command, CommandMetadata, Event, EventMetadata, Event, EventMetadata, Txn>,
-              SYSTEM : ISystem<Command, State, Event> =
-    process(command, inEventSourcedSystem())
-
-/**
- * Handles a command by composing domain logic ([IDynamicSystem]) and event repository operations ([IEventRepository]).
- *
- * This extension function demonstrates **composition through multiple type constraints**:
- * - `SYSTEM : IEventRepository` provides event persistence capabilities (fetchEvents, save)
- * - `SYSTEM : IDynamicSystem` provides domain logic (decide, evolve, initialState)
- *
- * The composition happens at the type level: any type implementing both interfaces
- * automatically gains the `handle` capability. Supports dynamic systems where input and
- * output event types differ (InEvent ≠ OutEvent).
- *
- * The function extracts the pure domain system via `inEventSourcedSystem()` and passes it
- * to the repository's `process` method. Metadata flows through the infrastructure layer
- * but never enters the domain system, maintaining separation of concerns.
- *
- * @param command The command paired with metadata (e.g., user context, correlation ID)
- * @return The resulting sequence of events paired with metadata (e.g., sequence numbers, timestamps)
- */
-@JvmName("handleDynamicSystem")
-suspend fun <SYSTEM, Command, State, InEvent, OutEvent, CommandMetadata, InEventMetadata, OutEventMetadata, Txn> SYSTEM.handle(
-    command: Pair<Command, CommandMetadata>
-): List<Pair<OutEvent, OutEventMetadata>>
-        where SYSTEM : IEventRepository<Command, CommandMetadata, InEvent, InEventMetadata, OutEvent, OutEventMetadata, Txn>,
-              SYSTEM : IDynamicSystem<Command, State, InEvent, OutEvent> =
-    process(command, inEventSourcedSystem())
