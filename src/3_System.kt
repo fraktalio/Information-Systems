@@ -108,7 +108,9 @@ inline infix fun <
     other: System<Command2?, State2, Event2?>
 ): System<Command_SUPER?, Pair<State1, State2>, Event_SUPER?> =
     GeneralSystem(decide, evolve, initialState)
-        .combine(GeneralSystem(other.decide, other.evolve, other.initialState))
+        .combine<Command1, Command2, Event1, Event2, Event1, Event2, Command_SUPER, State1, State1, Event_SUPER?, Event_SUPER, State2, State2>(
+            GeneralSystem(other.decide, other.evolve, other.initialState)
+        )
         .asSystem()
 
 
