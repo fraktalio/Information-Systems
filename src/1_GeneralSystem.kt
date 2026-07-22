@@ -375,10 +375,10 @@ private val decrementCounterSystem =
  * - Useful in testing or as a placeholder system.
  * - Proves that `GeneralSystem` with `_combine` and `emptySystem` forms a Monoid.
  */
-private val emptySystem = GeneralSystem</*Nothing*/Unit?, Unit, Unit, /*Nothing*/Unit?, Nothing?>(
+private val emptySystem = GeneralSystem<Nothing?, Unit, Unit, Nothing?, Nothing?>(
     decide = { _, _ -> emptyList() },
-    evolve = { _, _ -> Unit },
-    initialState = { Unit }
+    evolve = { _, _ -> },
+    initialState = { }
 )
 
 // ################################# Combined (Counter) system #################################
@@ -424,7 +424,7 @@ private val counterSystem: GeneralSystem<CounterCommand?, CounterState, CounterS
  */
 private val counterSystem1: GeneralSystem<CounterCommand?, CounterState, CounterState, CounterEvent?, CounterEvent?> =
     counterSystem
-        .combine<CounterCommand, Unit, CounterEvent, Unit, CounterEvent, CounterEvent, Any?, CounterState, CounterState, Any?, CounterEvent, Unit, Unit>(
+        .combine<CounterCommand, Nothing?, CounterEvent, Nothing?, CounterEvent, CounterEvent, Any?, CounterState, CounterState, Any?, CounterEvent, Unit, Unit>(
             emptySystem
         ) // GeneralSystem<CounterCommand?, Pair<CounterState, Unit>, Pair<CounterState, Unit>, CounterEvent?, CounterEvent?>
         .mapState(
